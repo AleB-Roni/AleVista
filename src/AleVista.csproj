@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>AleVista</RootNamespace>
+    <AssemblyName>AleVista</AssemblyName>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>SystemAware</ApplicationHighDpiMode>
+    <ApplicationVisualStyles>true</ApplicationVisualStyles>
+    <ApplicationDefaultFont>Segoe UI, 9.75pt</ApplicationDefaultFont>
+    <Version>1.0.0</Version>
+    <Product>AleVista</Product>
+    <Description>Monitorprofile – Bildschirme per Klick an- und abschalten</Description>
+    <Authors>Roni</Authors>
+    <NoWarn>$(NoWarn);CA1416;CS0108</NoWarn>
+  </PropertyGroup>
+
+</Project>

@@ -74,6 +74,7 @@ internal sealed class LayoutPreview : Control
             var rect = Rectangle.Round(rf);
             bool roomy = rf.Height >= Sf(46) && rf.Width >= Sf(60);
             var numText = it.Number > 0 ? it.Number.ToString() : "";
+            if (it.Mirror != null && it.Enabled) numText += " = " + it.Mirror;
             if (roomy)
             {
                 var top = new Rectangle(rect.X, rect.Y + (int)(rect.Height * 0.16f), rect.Width, (int)(rect.Height * 0.45f));
@@ -125,6 +126,7 @@ internal sealed class ProfileCard : Control
         int on = p.Monitors.Count;
         int total = Math.Max(ctl.Master?.MonitorSet().Count ?? on, on);
         var parts = new List<string> { p.Fixed != null ? $"{on} Monitor{(on == 1 ? "" : "e")} · feste Anordnung" : $"{on} von {total} Monitoren an" };
+        if (ctl.MirrorGroupsOf(p).Count > 0) parts.Add("gespiegelt");
         if (p.Hotkey is >= 1 and <= 9) parts.Add($"Strg+Alt+{p.Hotkey}");
         _summary = string.Join("  ·  ", parts);
 

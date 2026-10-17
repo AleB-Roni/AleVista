@@ -18,6 +18,24 @@ public sealed class SnapshotDto
     };
 }
 
+/// <summary>Monitore, die dasselbe Bild zeigen (Spiegeln/Duplizieren).</summary>
+public sealed class MirrorGroup
+{
+    public List<string> Monitors { get; set; } = new();
+    /// <summary>Monitor, dessen Auflösung (und Position) die Gruppe übernimmt. null = erster der Gruppe.</summary>
+    public string? ResolutionFrom { get; set; }
+
+    public MirrorGroup Clone() => new() { Monitors = new List<string>(Monitors), ResolutionFrom = ResolutionFrom };
+
+    /// <summary>Die Mitglieder, die gerade verfügbar sind (Reihenfolge bleibt).</summary>
+    public List<string> Present(Func<string, bool> has) =>
+        Monitors.Where(has).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+    /// <summary>Monitor, dessen Auflösung gilt – unter den verfügbaren Mitgliedern.</summary>
+    public string Owner(List<string> present) =>
+        present.FirstOrDefault(id => string.Equals(id, ResolutionFrom, StringComparison.OrdinalIgnoreCase)) ?? present[0];
+}
+
 public sealed class Profile
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -30,6 +48,8 @@ public sealed class Profile
     public SnapshotDto? Fixed { get; set; }
     /// <summary>0 = kein Kürzel, 1–9 = Strg+Alt+Ziffer.</summary>
     public int Hotkey { get; set; }
+    /// <summary>Gespiegelte Monitore in diesem Profil.</summary>
+    public List<MirrorGroup> Mirrors { get; set; } = new();
 
     public Profile Duplicate(string newName) => new()
     {
@@ -38,6 +58,7 @@ public sealed class Profile
         Primary = Primary,
         Fixed = Fixed?.Clone(),
         Hotkey = 0,
+        Mirrors = Mirrors.Select(m => m.Clone()).ToList(),
     };
 }
 

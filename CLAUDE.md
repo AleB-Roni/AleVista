@@ -34,6 +34,7 @@ upload-to-github.bat          Upload für Windows
 - **Adapter-LUIDs ändern sich bei jedem Neustart** → `DisplaySnapshot.Adapters` speichert LUID → Adapter-Gerätepfad, `Apply()` mappt auf aktuelle LUIDs um.
 - **Master/Vorlage**: Anordnung mit allen Monitoren an. Wird automatisch neu gelernt, wenn die aktive Konfiguration eine Obermenge der bisherigen ist. Profile ohne `Fixed` werden per `Master.Filter()` + `Layout.Normalize()` abgeleitet.
 - **Fixed-Profile** („Aktuelle Anordnung speichern“): exakte Pfade/Modi als Base64 der blittable Structs (`MemoryMarshal`). Struct-Layouts in `Native.cs` daher nicht ändern (PATH_INFO = 72 Bytes, MODE_INFO = 64 Bytes).
+- **Spiegeln** (`Profile.Mirrors`, `MirrorGroup`): Monitore einer Gruppe bekommen in `DisplaySnapshot.WithMirrors()` dieselbe Quelle (Adapter, Source-ID, Quell-Modus) wie der Auflösungs-Monitor (`ResolutionFrom`); deren Ziel-Modus wird auf ungültig gesetzt, damit Windows passend skaliert. Gruppe übernimmt Auflösung + Position dieses Monitors. Gespiegelte Konfigurationen werden **nicht** als Vorlage gelernt. Spiegeln geht i. d. R. nur an derselben Grafikkarte.
 - `Apply()` versucht zuerst `SDC_USE_SUPPLIED_DISPLAY_CONFIG`, Fallback `SDC_TOPOLOGY_SUPPLIED` ohne Modi.
 - Nach dem Umschalten 15-s-Bestätigung (`ConfirmForm`), sonst Rücksetzen auf den vorherigen Snapshot.
 - In RDP-Sitzungen verweigert Windows `SetDisplayConfig` (Fehler 5) – immer lokal testen.

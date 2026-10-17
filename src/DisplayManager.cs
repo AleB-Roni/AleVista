@@ -118,6 +118,59 @@ public sealed class DisplaySnapshot
         };
     }
 
+    string SourceKey(int pathIndex)
+    {
+        var src = Paths[pathIndex].sourceInfo;
+        return DisplayManager.LuidKey(src.adapterId) + ":" + src.id;
+    }
+
+    /// <summary>Gruppen von Pfad-Indizes, die sich eine Quelle teilen (= gespiegelt). Nur Gruppen ab 2 Monitoren.</summary>
+    public List<List<int>> CloneGroups() =>
+        Enumerable.Range(0, Paths.Length)
+            .GroupBy(SourceKey)
+            .Select(g => g.ToList())
+            .Where(g => g.Count > 1)
+            .ToList();
+
+    public bool HasClones() => CloneGroups().Count > 0;
+
+    /// <summary>Text, der die Spiegel-Gruppen beschreibt (zum Vergleichen, unabhängig von der Reihenfolge).</summary>
+    public string CloneSignature()
+    {
+        var groups = CloneGroups()
+            .Select(g => string.Join("+", g.Select(i => MonitorIds[i].ToLowerInvariant()).OrderBy(x => x, StringComparer.Ordinal)))
+            .OrderBy(x => x, StringComparer.Ordinal);
+        return string.Join("|", groups);
+    }
+
+    /// <summary>
+    /// Neuer Snapshot, in dem die Monitore jeder Gruppe dieselbe Quelle (Desktop-Bild, Auflösung, Position)
+    /// wie der Auflösungs-Monitor der Gruppe nutzen. Gibt dieselbe Instanz zurück, wenn sich nichts ändert.
+    /// </summary>
+    public DisplaySnapshot WithMirrors(IEnumerable<MirrorGroup> groups)
+    {
+        DisplaySnapshot? s = null;
+        foreach (var g in groups)
+        {
+            var present = g.Present(id => IndexOf(id) >= 0);
+            if (present.Count < 2) continue;
+            s ??= Clone();
+            var src = s.Paths[s.IndexOf(g.Owner(present))].sourceInfo;
+            foreach (var id in present)
+            {
+                int i = s.IndexOf(id);
+                if (DisplayManager.Same(s.Paths[i].sourceInfo.adapterId, src.adapterId) && s.Paths[i].sourceInfo.id == src.id) continue;
+                s.Paths[i].sourceInfo.adapterId = src.adapterId;
+                s.Paths[i].sourceInfo.id = src.id;
+                s.Paths[i].sourceInfo.modeInfoIdx = src.modeInfoIdx;
+                // Signal-Modus wählt Windows passend zur übernommenen Auflösung (ggf. skaliert).
+                s.Paths[i].targetInfo.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
+            }
+        }
+        // Filter nummeriert die Modi neu und wirft nicht mehr benutzte Quell-Modi raus.
+        return s == null ? this : s.Filter(_ => true);
+    }
+
     /// <summary>Kurzer Text, der Monitore + Positionen beschreibt (zum Vergleichen).</summary>
     public string LayoutSignature()
     {
@@ -256,7 +309,7 @@ public static class DisplayManager
     }
 
     internal static string LuidKey(LUID l) => $"{(uint)l.HighPart:X8}{l.LowPart:X8}";
-    static bool Same(LUID a, LUID b) => a.LowPart == b.LowPart && a.HighPart == b.HighPart;
+    internal static bool Same(LUID a, LUID b) => a.LowPart == b.LowPart && a.HighPart == b.HighPart;
 
     static DISPLAYCONFIG_TARGET_DEVICE_NAME? GetTargetName(LUID adapter, uint targetId)
     {

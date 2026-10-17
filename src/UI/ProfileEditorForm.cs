@@ -18,13 +18,15 @@ internal sealed class ProfileEditorForm : DarkForm
     readonly ComboBox _primary, _hotkey;
     readonly LayoutPreview _preview;
     readonly Label _note;
-    readonly Panel _mirrorPanel;
+    readonly Panel _mirrorPanel, _hzPanel;
     readonly Btn _save, _cancel;
     readonly HashSet<string> _originalSet;
     /// <summary>Monitor → Monitor, dessen Bild er zeigen soll.</summary>
     readonly Dictionary<string, string> _mirrorPick = new(StringComparer.OrdinalIgnoreCase);
     /// <summary>Monitore, deren Auflösung in ihrer Spiegel-Gruppe gelten soll.</summary>
     readonly HashSet<string> _resOwners = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>Gewünschte Hz je Monitor (bei Spiegel-Gruppen am Auflösungs-Monitor).</summary>
+    readonly Dictionary<string, int> _hz = new(StringComparer.OrdinalIgnoreCase);
     bool _loading = true;
 
     public ProfileEditorForm(AppController ctl, Profile profile, bool isNew)
@@ -32,6 +34,7 @@ internal sealed class ProfileEditorForm : DarkForm
         _ctl = ctl;
         _profile = profile;
         _originalSet = new HashSet<string>(profile.Monitors, StringComparer.OrdinalIgnoreCase);
+        foreach (var (id, hz) in profile.RefreshRates) _hz[id] = hz;
         foreach (var g in profile.Mirrors)
         {
             if (g.Monitors.Count < 2) continue;
@@ -130,6 +133,8 @@ internal sealed class ProfileEditorForm : DarkForm
         Controls.Add(_preview);
         _note = MakeLabel("", Small, TextDim, new Point(rightX, S(252)), rightW, S(170));
         Controls.Add(_note);
+        _hzPanel = new Panel { Location = new Point(rightX, _note.Bottom + S(10)), Size = new Size(rightW, 0), BackColor = Bg };
+        Controls.Add(_hzPanel);
 
         _save = new Btn("Speichern", primary: true) { Width = S(120) };
         _cancel = new Btn("Abbrechen") { Width = S(110) };
@@ -249,21 +254,84 @@ internal sealed class ProfileEditorForm : DarkForm
                     if (_loading) return;
                     foreach (var m in members) _resOwners.Remove(m);
                     if ((cb.SelectedItem as Item)?.Id is { } owner) _resOwners.Add(owner);
-                    UpdatePreview();
+                    BeginInvoke(new Action(() => { RebuildMirrors(); UpdatePreview(); }));
                 };
                 _mirrorPanel.Controls.Add(cb);
                 y += S(34);
             }
         }
         _mirrorPanel.Height = y;
+        RebuildRefreshRows();
         LayoutBottom();
         ResumeLayout();
         _loading = wasLoading;
     }
 
+    /// <summary>Monitore mit eigenem Bild: einzelne Monitore und je Spiegel-Gruppe der Auflösungs-Monitor.</summary>
+    List<(string id, List<string> members)> OwnImages()
+    {
+        var groups = MirrorGroups();
+        var list = new List<(string, List<string>)>();
+        foreach (var id in CheckedIds())
+        {
+            var g = groups.FirstOrDefault(x => x.Monitors.Contains(id, StringComparer.OrdinalIgnoreCase));
+            if (g == null) list.Add((id, new List<string> { id }));
+            else if (string.Equals(g.ResolutionFrom, id, StringComparison.OrdinalIgnoreCase)) list.Add((id, g.Monitors));
+        }
+        return list;
+    }
+
+    void RebuildRefreshRows()
+    {
+        foreach (Control c in _hzPanel.Controls.Cast<Control>().ToList()) c.Dispose();
+        _hzPanel.Controls.Clear();
+        int w = _hzPanel.Width, labelW = S(118), y = 0;
+        _hzPanel.Controls.Add(MakeLabel("BILDWIEDERHOLRATE", Section, TextDim, new Point(0, y), w));
+        y += S(22);
+        var draft = Draft();
+        foreach (var (id, members) in OwnImages())
+        {
+            // Hz-Wahl wandert mit, wenn in der Gruppe ein anderer Monitor die Auflösung vorgibt.
+            if (!_hz.ContainsKey(id))
+                foreach (var m in members)
+                    if (_hz.Remove(m, out var old)) { _hz[id] = old; break; }
+            foreach (var m in members)
+                if (!string.Equals(m, id, StringComparison.OrdinalIgnoreCase)) _hz.Remove(m);
+
+            var title = members.Count > 1 ? string.Join(" + ", members.Select(m => _ctl.NumberOf(m))) : MonitorLabel(id);
+            _hzPanel.Controls.Add(MakeLabel(title, Body, Theme.Text, new Point(0, y + S(3)), labelW - S(6)));
+
+            var res = _ctl.ProfileResolutionOf(draft, id);
+            var rates = res is { } r ? _ctl.RefreshRatesOf(id, r) : new List<int>();
+            var cb = MakeCombo(new Point(labelW, y), w - labelW);
+            cb.Items.Add(new Item { Id = null, Label = rates.Count > 0 ? "Automatisch" : "Automatisch (Hz unbekannt – Monitor einmal einschalten)" });
+            var shown = new List<int>(rates);
+            if (_hz.TryGetValue(id, out var cur) && !shown.Contains(cur)) shown.Add(cur);
+            shown.Sort();
+            int sel = 0;
+            foreach (var hz in shown.AsEnumerable().Reverse())
+            {
+                cb.Items.Add(new Item { Id = hz.ToString(), Label = $"{hz} Hz" + (rates.Contains(hz) ? "" : "  (nicht bestätigt)") });
+                if (hz == cur && _hz.ContainsKey(id)) sel = cb.Items.Count - 1;
+            }
+            cb.SelectedIndex = sel;
+            var monitor = id;
+            cb.SelectedIndexChanged += (_, _) =>
+            {
+                if (_loading) return;
+                if (int.TryParse((cb.SelectedItem as Item)?.Id, out var hz)) _hz[monitor] = hz;
+                else _hz.Remove(monitor);
+                UpdatePreview();
+            };
+            _hzPanel.Controls.Add(cb);
+            y += S(34);
+        }
+        _hzPanel.Height = y;
+    }
+
     void LayoutBottom()
     {
-        int bottom = Math.Max(_mirrorPanel.Bottom + S(10), S(440));
+        int bottom = Math.Max(Math.Max(_mirrorPanel.Bottom, _hzPanel.Bottom) + S(10), S(440));
         ClientSize = new Size(_preview.Right + S(24), bottom + S(56));
         _save.Location = new Point(ClientSize.Width - S(24) - _save.Width, ClientSize.Height - S(20) - _save.Height);
         _cancel.Location = new Point(_save.Left - S(10) - _cancel.Width, _save.Top);
@@ -299,7 +367,17 @@ internal sealed class ProfileEditorForm : DarkForm
             Fixed = fixedStillValid ? _profile.Fixed : null,
             Hotkey = int.TryParse((_hotkey.SelectedItem as Item)?.Id, out var h) ? h : 0,
             Mirrors = MirrorGroups(),
+            RefreshRates = RefreshSelection(),
         };
+    }
+
+    /// <summary>Hz-Auswahl nur für eingeschaltete Monitore mit eigenem Bild.</summary>
+    Dictionary<string, int> RefreshSelection()
+    {
+        var result = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (id, _) in OwnImages())
+            if (_hz.TryGetValue(id, out var hz)) result[id] = hz;
+        return result;
     }
 
     void UpdatePreview()
@@ -322,6 +400,8 @@ internal sealed class ProfileEditorForm : DarkForm
                     ? " Achtung: Die Monitore hängen an verschiedenen Grafikkarten – das kann Windows evtl. nicht spiegeln."
                     : ""));
         }
+        if (d.RefreshRates.Count > 0)
+            lines.Add("Bildwiederholrate: " + string.Join(", ", d.RefreshRates.Select(kv => $"{_ctl.NumberOf(kv.Key)} → {kv.Value} Hz")) + ".");
         lines.Add("Grüner Punkt = Hauptmonitor. „3 = 1“ = Monitor 3 spiegelt Monitor 1.");
         _note.Text = string.Join("\n\n", lines);
     }
@@ -338,6 +418,7 @@ internal sealed class ProfileEditorForm : DarkForm
         _profile.Fixed = d.Fixed;
         _profile.Hotkey = d.Hotkey;
         _profile.Mirrors = d.Mirrors;
+        _profile.RefreshRates = d.RefreshRates;
         if (d.Hotkey > 0)
             foreach (var other in _ctl.Data.Profiles)
                 if (other != _profile && other.Hotkey == d.Hotkey) other.Hotkey = 0;

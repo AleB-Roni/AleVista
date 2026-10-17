@@ -188,6 +188,64 @@ internal static class Native
     [DllImport("user32.dll")]
     public static extern int DisplayConfigGetDeviceInfo(ref DISPLAYCONFIG_SOURCE_DEVICE_NAME requestPacket);
 
+    // --- Bildwiederholrate (GDI) ---
+    public const int ENUM_CURRENT_SETTINGS = -1;
+    public const uint DM_PELSWIDTH = 0x00080000;
+    public const uint DM_PELSHEIGHT = 0x00100000;
+    public const uint DM_DISPLAYFREQUENCY = 0x00400000;
+    public const uint DM_INTERLACED = 0x00000002;
+    public const uint CDS_UPDATEREGISTRY = 0x00000001;
+    public const uint CDS_NORESET = 0x10000000;
+    public const int DISP_CHANGE_SUCCESSFUL = 0;
+
+    /// <summary>DEVMODEW (Anzeige-Variante), 220 Bytes</summary>
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct DEVMODE
+    {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string dmDeviceName;
+        public ushort dmSpecVersion;
+        public ushort dmDriverVersion;
+        public ushort dmSize;
+        public ushort dmDriverExtra;
+        public uint dmFields;
+        public int dmPositionX;
+        public int dmPositionY;
+        public uint dmDisplayOrientation;
+        public uint dmDisplayFixedOutput;
+        public short dmColor;
+        public short dmDuplex;
+        public short dmYResolution;
+        public short dmTTOption;
+        public short dmCollate;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string dmFormName;
+        public ushort dmLogPixels;
+        public uint dmBitsPerPel;
+        public uint dmPelsWidth;
+        public uint dmPelsHeight;
+        public uint dmDisplayFlags;
+        public uint dmDisplayFrequency;
+        public uint dmICMMethod;
+        public uint dmICMIntent;
+        public uint dmMediaType;
+        public uint dmDitherType;
+        public uint dmReserved1;
+        public uint dmReserved2;
+        public uint dmPanningWidth;
+        public uint dmPanningHeight;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern bool EnumDisplaySettings(string deviceName, int modeNum, ref DEVMODE devMode);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int ChangeDisplaySettingsEx(string deviceName, ref DEVMODE devMode, IntPtr hwnd, uint flags, IntPtr lParam);
+
+    /// <summary>Ohne DEVMODE: übernimmt alle vorher mit CDS_NORESET gesammelten Änderungen.</summary>
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int ChangeDisplaySettingsEx(string? deviceName, IntPtr devMode, IntPtr hwnd, uint flags, IntPtr lParam);
+
     // --- Hotkeys / Fenster ---
     public const int WM_HOTKEY = 0x0312;
     public const uint MOD_ALT = 0x0001;

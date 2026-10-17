@@ -50,6 +50,9 @@ public sealed class Profile
     public int Hotkey { get; set; }
     /// <summary>Gespiegelte Monitore in diesem Profil.</summary>
     public List<MirrorGroup> Mirrors { get; set; } = new();
+    /// <summary>Gewünschte Bildwiederholrate (Hz) je Monitor-ID; fehlt ein Monitor = automatisch.
+    /// Bei Spiegel-Gruppen steht nur der Auflösungs-Monitor drin.</summary>
+    public Dictionary<string, int> RefreshRates { get; set; } = new();
 
     public Profile Duplicate(string newName) => new()
     {
@@ -59,6 +62,7 @@ public sealed class Profile
         Fixed = Fixed?.Clone(),
         Hotkey = 0,
         Mirrors = Mirrors.Select(m => m.Clone()).ToList(),
+        RefreshRates = new Dictionary<string, int>(RefreshRates, StringComparer.OrdinalIgnoreCase),
     };
 }
 
@@ -70,6 +74,8 @@ public sealed class KnownMonitor
     public uint ConnectorInstance { get; set; }
     public string? Alias { get; set; }
     public DateTime LastSeen { get; set; }
+    /// <summary>Unterstützte Bildwiederholraten je Auflösung („1920x1080“ → [60, 144]), gelernt, solange der Monitor an war.</summary>
+    public Dictionary<string, List<int>> RefreshRates { get; set; } = new();
 }
 
 public sealed class AppSettings

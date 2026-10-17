@@ -514,6 +514,75 @@ public static class DisplayManager
         return new ApplyResult { Ok = true, Missing = missing, Message = "Umgeschaltet." + MissingNote(missing.Count) };
     }
 
+    static DEVMODE NewDevMode() => new()
+    {
+        dmDeviceName = "",
+        dmFormName = "",
+        dmSize = (ushort)Marshal.SizeOf<DEVMODE>(),
+    };
+
+    public static string ResolutionKey(int width, int height) => $"{width}x{height}";
+
+    /// <summary>Unterstützte Bildwiederholraten eines aktiven GDI-Geräts, je Auflösung.</summary>
+    public static Dictionary<string, List<int>> GetRefreshRates(string gdiName)
+    {
+        var result = new Dictionary<string, List<int>>();
+        var dm = NewDevMode();
+        for (int i = 0; EnumDisplaySettings(gdiName, i, ref dm); i++)
+        {
+            if ((dm.dmDisplayFlags & DM_INTERLACED) != 0 || dm.dmDisplayFrequency <= 1) continue;
+            var key = ResolutionKey((int)dm.dmPelsWidth, (int)dm.dmPelsHeight);
+            if (!result.TryGetValue(key, out var list)) result[key] = list = new List<int>();
+            if (!list.Contains((int)dm.dmDisplayFrequency)) list.Add((int)dm.dmDisplayFrequency);
+            dm = NewDevMode();
+        }
+        foreach (var list in result.Values) list.Sort();
+        return result;
+    }
+
+    /// <summary>
+    /// Stellt nach dem Umschalten die gewünschten Bildwiederholraten ein (Monitor-ID → Hz).
+    /// Gibt einen Hinweistext zurück, wenn etwas nicht geklappt hat (sonst "").
+    /// </summary>
+    public static string ApplyRefreshRates(IReadOnlyDictionary<string, int> rates)
+    {
+        if (rates.Count == 0) return "";
+        DisplaySnapshot active;
+        try { active = CaptureActive(); } catch { return " Bildwiederholrate konnte nicht gesetzt werden."; }
+
+        var problems = new List<string>();
+        var done = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int changed = 0;
+        foreach (var (id, hz) in rates)
+        {
+            int i = active.IndexOf(id);
+            if (i < 0 || hz <= 0) continue;
+            var gdi = GetGdiName(active, i);
+            if (string.IsNullOrEmpty(gdi) || !done.Add(gdi)) continue;
+
+            var dm = NewDevMode();
+            if (!EnumDisplaySettings(gdi, ENUM_CURRENT_SETTINGS, ref dm)) { problems.Add($"{hz} Hz"); continue; }
+            if (dm.dmDisplayFrequency == hz) continue;
+
+            var supported = GetRefreshRates(gdi).GetValueOrDefault(ResolutionKey((int)dm.dmPelsWidth, (int)dm.dmPelsHeight));
+            if (supported != null && !supported.Contains(hz))
+            {
+                problems.Add($"{hz} Hz bei {dm.dmPelsWidth} × {dm.dmPelsHeight}");
+                continue;
+            }
+            dm.dmDisplayFrequency = (uint)hz;
+            dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
+            if (ChangeDisplaySettingsEx(gdi, ref dm, IntPtr.Zero, CDS_UPDATEREGISTRY | CDS_NORESET, IntPtr.Zero) == DISP_CHANGE_SUCCESSFUL)
+                changed++;
+            else
+                problems.Add($"{hz} Hz");
+        }
+        // Alle gesammelten Änderungen auf einmal übernehmen.
+        if (changed > 0) ChangeDisplaySettingsEx(null, IntPtr.Zero, IntPtr.Zero, 0, IntPtr.Zero);
+
+        return problems.Count == 0 ? "" : " Nicht möglich: " + string.Join(", ", problems) + ".";
+    }
+
     static string MissingNote(int n) => n switch
     {
         0 => "",

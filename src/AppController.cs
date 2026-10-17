@@ -49,6 +49,7 @@ public sealed class AppController
             k.ConnectorInstance = m.ConnectorInstance;
             k.LastSeen = DateTime.Now;
         }
+        LearnRefreshRates();
 
         // Vorlage lernen: wenn gerade mindestens alle Monitore der Vorlage an sind, ist das die neue Vorlage
         // (so werden auch Umsortierungen in den Windows-Anzeigeeinstellungen übernommen).
@@ -84,6 +85,40 @@ public sealed class AppController
         Data.Master = Master.ToDto();
         Save();
         Changed?.Invoke();
+    }
+
+    /// <summary>Merkt sich, welche Bildwiederholraten die aktiven Monitore können (nur solange sie an sind abfragbar).</summary>
+    void LearnRefreshRates()
+    {
+        if (Current == null) return;
+        var cloned = Current.CloneGroups().SelectMany(g => g).ToHashSet();
+        for (int i = 0; i < Current.Count; i++)
+        {
+            // Bei gespiegelten Monitoren liefert Windows die Modi der gemeinsamen Quelle – nicht eindeutig.
+            if (cloned.Contains(i)) continue;
+            var k = Known(Current.MonitorIds[i]);
+            if (k == null) continue;
+            try
+            {
+                var gdi = DisplayManager.GetGdiName(Current, i);
+                if (string.IsNullOrEmpty(gdi)) continue;
+                var rates = DisplayManager.GetRefreshRates(gdi);
+                if (rates.Count > 0) k.RefreshRates = rates;
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>Bekannte Bildwiederholraten eines Monitors bei einer Auflösung (leer = unbekannt).</summary>
+    public List<int> RefreshRatesOf(string id, Size resolution) =>
+        Known(id)?.RefreshRates.GetValueOrDefault(DisplayManager.ResolutionKey(resolution.Width, resolution.Height)) ?? new List<int>();
+
+    /// <summary>Auflösung, die der Monitor in diesem Profil bekommt (null = unbekannt).</summary>
+    public Size? ProfileResolutionOf(Profile p, string id)
+    {
+        var s = BuildSnapshot(p);
+        int i = s?.IndexOf(id) ?? -1;
+        return i >= 0 && s!.SourceRect(i) is { } r ? r.Size : null;
     }
 
     // ---------- Monitore ----------
@@ -195,7 +230,12 @@ public sealed class AppController
         var s = BuildSnapshot(p);
         if (s == null)
             return ApplyResult.Fail("Für dieses Profil fehlt die Vorlage. Bitte einmal „Alle aktivieren & einlesen“ ausführen.");
-        return DisplayManager.Apply(s);
+        var r = DisplayManager.Apply(s);
+        if (!r.Ok || p.RefreshRates.Count == 0) return r;
+        var on = new HashSet<string>(p.Monitors, Cmp);
+        var rates = p.RefreshRates.Where(kv => on.Contains(kv.Key)).ToDictionary(kv => kv.Key, kv => kv.Value, Cmp);
+        var note = DisplayManager.ApplyRefreshRates(rates);
+        return note.Length == 0 ? r : new ApplyResult { Ok = true, Missing = r.Missing, Message = r.Message + note };
     }
 
     public bool IsProfileActive(Profile p)

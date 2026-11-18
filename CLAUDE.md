@@ -23,7 +23,14 @@ src/
   UI/Controls.cs        LayoutPreview, ProfileCard, AddCard, MonitorRow (alles selbst gezeichnet)
   UI/Dialogs.cs         DarkForm-Basis, InputDialog, ConfirmForm (Countdown), IdentifyForm
   UI/ProfileEditorForm.cs  Profil anlegen/bearbeiten
-  UI/MainForm.cs        Hauptfenster, Tray, Hotkeys Strg+Alt+1–9, Autostart (HKCU\...\Run)
+  UI/MainForm.cs        Hauptfenster mit Reitern, Tray, Hotkeys Strg+Alt+1–9, Autostart (HKCU\...\Run)
+  UI/SharePage.cs       Reiter „Maus & Tastatur teilen“, Schlüssel-Dialog
+  UI/ShareControls.cs   Toggle, MachineCanvas (Anordnung der PCs, ziehbar), PeerRow, HotkeyCard, TabStrip
+  Share/ShareService.cs Maus/Tastatur teilen: Verbindungen, Suche, Kantenwechsel, Weiterleiten/Nachspielen, Zwischenablage
+  Share/ShareProtocol.cs Nachrichten, AES-GCM-Kanal (SecureChannel), PeerConnection (Lese-/Schreib-Thread)
+  Share/ShareGeometry.cs MachineView/ShareWorld (Anordnung), Einrasten/Andocken
+  Share/InputHook.cs    Low-Level-Hooks auf eigenem Thread (Per-Monitor-DPI), ClipboardWatcher
+  Share/ShareNative.cs  P/Invoke: Hooks, SendInput, Cursor, EnumDisplayMonitors
 .github/workflows/build.yml   Build + automatisches Release bei jedem Push nach main (v1.0.<run_number>)
 upload-to-github.command      Doppelklick-Upload für macOS
 upload-to-github.bat          Upload für Windows
@@ -37,6 +44,14 @@ upload-to-github.bat          Upload für Windows
 - `Apply()` versucht zuerst `SDC_USE_SUPPLIED_DISPLAY_CONFIG`, Fallback `SDC_TOPOLOGY_SUPPLIED` ohne Modi.
 - Nach dem Umschalten 15-s-Bestätigung (`ConfirmForm`), sonst Rücksetzen auf den vorherigen Snapshot.
 - In RDP-Sitzungen verweigert Windows `SetDisplayConfig` (Fehler 5) – immer lokal testen.
+
+### Maus & Tastatur teilen
+- Alle PCs mit demselben Schlüssel (`AppData.Share.Key`) finden sich per UDP-Broadcast (Port 24861, mit Schlüssel-Fingerabdruck) und verbinden sich per TCP 24860. Sitzungsschlüssel = HMAC(PBKDF2(Schlüssel), Zufall beider Seiten), jede Nachricht AES-GCM.
+- Koordinaten immer in **physischen Pixeln** (Hook-Thread läuft mit Per-Monitor-DPI v2, Bildschirme über `EnumDisplayMonitors`).
+- „Welt“: jeder PC hat einen Offset (`SharePeer.X/Y`) relativ zu diesem PC. Beim Ziehen wird die Anordnung an alle verteilt (`Arrangement`), jeder rechnet sie in eigene Koordinaten um.
+- Der **steuernde** PC rechnet alles: Cursor wird geparkt, Deltas aus dem LL-Hook → virtuelle Position im Ziel-PC → absolute Position wird geschickt. Ziel-PC spielt per `SendInput` nach. Eigene Hooks ignorieren injizierte Ereignisse (`LLMHF_INJECTED`).
+- Threads: Einstellungen nur auf dem UI-Thread ändern; Hook/Netz lesen den Schnappschuss `ShareWorld`; Steuerzustand unter `_lock`. Keine `SendInput`-Aufrufe aus dem Hook-Callback (über `InputHook.Post`).
+- Doppelte Verbindungen: es bleibt die, die der PC mit der kleineren `MachineId` aufgebaut hat.
 
 ## Bauen
 - Lokal (Windows, .NET 8 SDK):

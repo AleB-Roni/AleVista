@@ -10,6 +10,8 @@ internal static class Program
     {
         ApplicationConfiguration.Initialize();
         Theme.Init();
+        // Falls beim Teilen der Mauszeiger ausgeblendet war: bei jedem Ende wiederherstellen.
+        AppDomain.CurrentDomain.UnhandledException += (_, _) => ShareNative.RestoreCursors();
 
         // Kommandozeile:  AleVista.exe --profile "Name"  → Profil anwenden und beenden (für Verknüpfungen / Stream Deck)
         int pi = Array.FindIndex(args, a => a.Equals("--profile", StringComparison.OrdinalIgnoreCase));

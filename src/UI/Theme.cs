@@ -15,6 +15,8 @@ internal static class Theme
     public static readonly Color AccentHover = Color.FromArgb(88, 220, 192);
     public static readonly Color AccentInk = Color.FromArgb(10, 34, 29);
     public static readonly Color Danger = Color.FromArgb(240, 112, 112);
+    /// <summary>Andere PCs beim Teilen von Maus &amp; Tastatur.</summary>
+    public static readonly Color Peer = Color.FromArgb(122, 162, 255);
 
     public static float Scale { get; private set; } = 1f;
 

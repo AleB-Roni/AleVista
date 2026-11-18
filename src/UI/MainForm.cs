@@ -14,7 +14,10 @@ internal sealed class MainForm : DarkForm
     readonly EventWaitHandle? _showEvent;
     readonly NotifyIcon _tray;
     readonly ContextMenuStrip _trayMenu;
-    readonly Panel _header, _current, _profilesHeader, _statusBar;
+    readonly Panel _header, _current, _profilesHeader, _statusBar, _profilesPage;
+    readonly TabStrip _tabs;
+    readonly ShareService _share;
+    readonly SharePage _sharePage;
     readonly Btn _identify, _activateAll, _winSettings, _gear, _saveCurrent;
     readonly LayoutPreview _currentPreview;
     readonly FlowLayoutPanel _monitorList, _cards;
@@ -38,7 +41,7 @@ internal sealed class MainForm : DarkForm
         // ---------- Kopfzeile ----------
         _header = new Panel { Dock = DockStyle.Top, Height = S(84), BackColor = Bg };
         _header.Controls.Add(MakeLabel("AleVista", Title, Theme.Text, new Point(S(24), S(16)), S(300), S(36)));
-        _header.Controls.Add(MakeLabel("Monitorprofile – Bildschirme per Klick an- und abschalten", Body, TextDim, new Point(S(26), S(52)), S(460)));
+        _header.Controls.Add(MakeLabel("Monitorprofile und eine Maus & Tastatur für mehrere PCs", Body, TextDim, new Point(S(26), S(52)), S(460)));
         _identify = new Btn("Identifizieren");
         _activateAll = new Btn("Alle aktivieren & einlesen");
         _winSettings = new Btn("Windows-Anzeige");
@@ -93,9 +96,27 @@ internal sealed class MainForm : DarkForm
         };
         _statusBar.Controls.Add(_status);
 
-        Controls.Add(profilesArea);
+        _profilesPage = new Panel { Dock = DockStyle.Fill, BackColor = Bg };
+        _profilesPage.Controls.Add(profilesArea);
+        _profilesPage.Controls.Add(_current);
+
+        // ---------- Maus & Tastatur teilen ----------
+        _share = new ShareService(_ctl, a =>
+        {
+            if (IsDisposed || !IsHandleCreated) return;
+            try { BeginInvoke(a); } catch (InvalidOperationException) { }
+        });
+        _sharePage = new SharePage(_share, _ctl, this, SetStatus) { Dock = DockStyle.Fill, Visible = false };
+        _share.Changed += () => { if (!IsDisposed) { _sharePage.RefreshAll(); RebuildTrayMenu(); } };
+        _share.Notice += SetStatus;
+
+        _tabs = new TabStrip("Monitorprofile", "Maus & Tastatur teilen") { Dock = DockStyle.Top };
+        _tabs.SelectedChanged += ShowTab;
+
+        Controls.Add(_profilesPage);
+        Controls.Add(_sharePage);
         Controls.Add(_statusBar);
-        Controls.Add(_current);
+        Controls.Add(_tabs);
         Controls.Add(_header);
 
         // ---------- Tray ----------
@@ -128,7 +149,7 @@ internal sealed class MainForm : DarkForm
             if (IsHandleCreated) BeginInvoke(new Action(() => { if (!IsDisposed) RebuildAll(); }));
             else RebuildAll();
         };
-        _refreshTimer.Tick += (_, _) => { _refreshTimer.Stop(); _ctl.Refresh(); };
+        _refreshTimer.Tick += (_, _) => { _refreshTimer.Stop(); _ctl.Refresh(); _share.RefreshLocalScreens(); };
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
 
         if (_showEvent != null)
@@ -157,6 +178,7 @@ internal sealed class MainForm : DarkForm
         DarkScrollbars(_cards);
         DarkScrollbars(_monitorList);
         _ctl.Refresh();
+        _share.Start();
         if (_ctl.LastError != null) SetStatus(_ctl.LastError);
         else SetStatus(_ctl.Master == null
             ? "Noch keine Vorlage. Klicke „Alle aktivieren & einlesen“."
@@ -215,6 +237,7 @@ internal sealed class MainForm : DarkForm
             _exiting = true;
             SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
             UnregisterHotkeys();
+            _share.Dispose();
             _tray.Dispose();
             _refreshTimer.Dispose();
         }
@@ -228,6 +251,18 @@ internal sealed class MainForm : DarkForm
     }
 
     // ---------- Layout ----------
+
+    void ShowTab(int index)
+    {
+        bool share = index == 1;
+        SuspendLayout();
+        _profilesPage.Visible = !share;
+        _sharePage.Visible = share;
+        _identify.Visible = _activateAll.Visible = _winSettings.Visible = !share;
+        ResumeLayout();
+        _sharePage.SetActive(share);
+        if (share) _sharePage.RefreshAll();
+    }
 
     void LayoutHeader()
     {
@@ -314,6 +349,10 @@ internal sealed class MainForm : DarkForm
             _trayMenu.Items.Add(item);
         }
         _trayMenu.Items.Add(new ToolStripSeparator());
+        _trayMenu.Items.Add(new ToolStripMenuItem("Maus && Tastatur teilen", null, (_, _) => _sharePage.SetEnabled(!_ctl.Data.Share.Enabled))
+            { Checked = _ctl.Data.Share.Enabled });
+        if (_share.TargetId != null)
+            _trayMenu.Items.Add(new ToolStripMenuItem("Maus zurück zu diesem PC", null, (_, _) => _share.ReturnHome()) { ShortcutKeyDisplayString = "Strg+Alt+F1" });
         _trayMenu.Items.Add("Alle aktivieren && einlesen", null, (_, _) => ActivateAllAndLearn());
         _trayMenu.Items.Add("Fenster öffnen", null, (_, _) => ShowFromTray());
         _trayMenu.Items.Add(new ToolStripSeparator());

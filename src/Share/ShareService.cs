@@ -64,6 +64,11 @@ internal sealed class ShareService : IDisposable
 
     public event Action? Changed;
     public event Action<string>? Notice;
+    /// <summary>Monitore eines anderen PCs haben sich geändert (oder er ist on-/offline gegangen).</summary>
+    public event Action? DisplaysChanged;
+
+    string? _lastDisplaysJson;
+    DisplaySnapshot? _beforeRemoteApply;
 
     public ShareService(AppController ctl, Action<Action> ui)
     {
@@ -102,6 +107,7 @@ internal sealed class ShareService : IDisposable
     {
         Stop(notify: false);
         LastError = null;
+        _lastDisplaysJson = null;
         if (!S.Enabled) { RaiseChanged(); return; }
 
         var key = ShareCrypto.Normalize(S.Key);
@@ -260,6 +266,60 @@ internal sealed class ShareService : IDisposable
     public void ReturnHome()
     {
         lock (_lock) if (_target != null) EndCaptureLocked(null);
+    }
+
+    // ================= Monitore über PCs hinweg (gemeinsame Profile) =================
+
+    static readonly System.Text.Json.JsonSerializerOptions JsonOpts = new();
+
+    string DisplaysJson() => System.Text.Json.JsonSerializer.Serialize(_ctl.ExportDisplays(), JsonOpts);
+
+    /// <summary>Eigene Monitore an alle verbundenen PCs schicken (nur bei Änderungen). UI-Thread.</summary>
+    public void PublishDisplays()
+    {
+        if (!_running) return;
+        var json = DisplaysJson();
+        if (json == _lastDisplaysJson) return;
+        _lastDisplaysJson = json;
+        Broadcast(Proto.Displays(json));
+    }
+
+    /// <summary>Einen anderen PC bitten, genau diese Monitore einzuschalten. false = nicht verbunden.</summary>
+    public bool RequestApply(string peerId, List<string> monitors, string? primary)
+    {
+        PeerConnection? c;
+        lock (_lock) _conns.TryGetValue(peerId, out c);
+        if (c == null || c.IsClosed) return false;
+        c.Send(Proto.ApplyDisplays(monitors, primary));
+        return true;
+    }
+
+    /// <summary>Anderen PC bitten, seine vorherige Anordnung wiederherzustellen.</summary>
+    public void RequestRevert(string peerId) => SendToPeer(peerId, Proto.RevertDisplays);
+
+    void SendToPeer(string id, byte[] payload)
+    {
+        PeerConnection? c;
+        lock (_lock) _conns.TryGetValue(id, out c);
+        c?.Send(payload);
+    }
+
+    void OnApplyRequest(PeerConnection c, List<string> monitors, string? primary)
+    {
+        if (!_running) return;
+        try { _beforeRemoteApply = DisplayManager.CaptureActive(); } catch { _beforeRemoteApply = null; }
+        var r = _ctl.ApplyMonitors(monitors, primary);
+        c.Send(Proto.ApplyResult(r.Ok, r.Message));
+        Notice?.Invoke(r.Ok ? $"Monitore von „{c.PeerName}“ aus umgeschaltet." : $"Umschalten von „{c.PeerName}“ aus fehlgeschlagen: {r.Message}");
+    }
+
+    void OnRevertRequest(PeerConnection c)
+    {
+        var before = _beforeRemoteApply;
+        _beforeRemoteApply = null;
+        if (before == null || !_running) return;
+        var r = DisplayManager.Apply(before);
+        Notice?.Invoke(r.Ok ? $"Vorherige Anordnung wiederhergestellt (auf Wunsch von „{c.PeerName}“)." : "Zurücksetzen fehlgeschlagen: " + r.Message);
     }
 
     // ================= Welt / Anordnung =================
@@ -467,7 +527,9 @@ internal sealed class ShareService : IDisposable
             // Beim Verbinden gibt der PC mit der kleineren ID die gemeinsame Anordnung vor (beide Seiten stimmen dann überein).
             if (string.CompareOrdinal(_myId, conn.PeerId) < 0) SendArrangement();
             Notice?.Invoke($"„{conn.PeerName}“ verbunden.");
+            try { conn.Send(Proto.Displays(DisplaysJson())); } catch { }
             Changed?.Invoke();
+            DisplaysChanged?.Invoke();
         });
     }
 
@@ -485,7 +547,7 @@ internal sealed class ShareService : IDisposable
             }
         }
         if (was && _running)
-            _ui(() => { RebuildWorld(); Notice?.Invoke($"Verbindung zu „{conn.PeerName}“ getrennt."); Changed?.Invoke(); });
+            _ui(() => { RebuildWorld(); Notice?.Invoke($"Verbindung zu „{conn.PeerName}“ getrennt."); Changed?.Invoke(); DisplaysChanged?.Invoke(); });
     }
 
     void OnMessage(PeerConnection c, MsgType t, BinaryReader r)
@@ -515,6 +577,42 @@ internal sealed class ShareService : IDisposable
                 _ui(() => ApplyArrangement(items));
                 break;
             }
+            case MsgType.Displays:
+            {
+                var json = r.ReadString();
+                RemoteDisplays? d = null;
+                try { d = System.Text.Json.JsonSerializer.Deserialize<RemoteDisplays>(json, JsonOpts); } catch { }
+                if (d == null) break;
+                _ui(() =>
+                {
+                    var p = S.Peers.FirstOrDefault(x => x.Id == c.PeerId);
+                    if (p == null) return;
+                    p.Displays = d;
+                    _ctl.Save();
+                    DisplaysChanged?.Invoke();
+                });
+                break;
+            }
+            case MsgType.ApplyDisplays:
+            {
+                int n = r.ReadInt32();
+                if (n < 0 || n > 64) break;
+                var list = new List<string>();
+                for (int i = 0; i < n; i++) list.Add(r.ReadString());
+                var prim = r.ReadString();
+                _ui(() => OnApplyRequest(c, list, prim.Length > 0 ? prim : null));
+                break;
+            }
+            case MsgType.ApplyResult:
+            {
+                bool ok = r.ReadBoolean();
+                var msg = r.ReadString();
+                _ui(() => Notice?.Invoke(ok ? $"„{c.PeerName}“ umgeschaltet." : $"„{c.PeerName}“ konnte nicht umschalten: {msg}"));
+                break;
+            }
+            case MsgType.RevertDisplays:
+                _ui(() => OnRevertRequest(c));
+                break;
             case MsgType.Clipboard:
             {
                 var text = r.ReadString();

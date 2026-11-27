@@ -21,6 +21,10 @@ internal enum MsgType : byte
     Clipboard = 10,
     Ping = 11,
     Arrangement = 12,
+    Displays = 13,
+    ApplyDisplays = 14,
+    ApplyResult = 15,
+    RevertDisplays = 16,
 }
 
 /// <summary>Bausteine der Nachrichten (Typ-Byte + Inhalt, mit BinaryWriter kodiert).</summary>
@@ -78,6 +82,16 @@ internal static class Proto
     public static readonly byte[] Leave = Build(MsgType.Leave);
     public static readonly byte[] TakeBack = Build(MsgType.TakeBack);
     public static readonly byte[] Ping = Build(MsgType.Ping);
+
+    public static byte[] Displays(string json) => Build(MsgType.Displays, w => w.Write(json));
+    public static byte[] ApplyDisplays(IReadOnlyList<string> monitors, string? primary) => Build(MsgType.ApplyDisplays, w =>
+    {
+        w.Write(monitors.Count);
+        foreach (var m in monitors) w.Write(m);
+        w.Write(primary ?? "");
+    });
+    public static byte[] ApplyResult(bool ok, string message) => Build(MsgType.ApplyResult, w => { w.Write(ok); w.Write(message); });
+    public static readonly byte[] RevertDisplays = Build(MsgType.RevertDisplays);
 
     public static byte[] Arrangement(IEnumerable<(string Id, int X, int Y)> items) => Build(MsgType.Arrangement, w =>
     {

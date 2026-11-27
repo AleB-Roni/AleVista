@@ -31,6 +31,10 @@ public sealed class Profile
     public SnapshotDto? Fixed { get; set; }
     /// <summary>0 = kein Kürzel, 1–9 = Strg+Alt+Ziffer.</summary>
     public int Hotkey { get; set; }
+    /// <summary>Gemeinsames Profil: Monitore dieses PCs nicht ändern (nur die anderen PCs umschalten).</summary>
+    public bool KeepLocal { get; set; }
+    /// <summary>Gemeinsames Profil: welche Monitore auf anderen PCs (Maus &amp; Tastatur teilen) an sein sollen.</summary>
+    public List<RemoteSelection> Remote { get; set; } = new();
 
     public Profile Duplicate(string newName) => new()
     {
@@ -39,7 +43,52 @@ public sealed class Profile
         Primary = Primary,
         Fixed = Fixed?.Clone(),
         Hotkey = 0,
+        KeepLocal = KeepLocal,
+        Remote = Remote.Select(r => r.Clone()).ToList(),
     };
+}
+
+/// <summary>Monitorauswahl für einen anderen PC innerhalb eines gemeinsamen Profils.</summary>
+public sealed class RemoteSelection
+{
+    public string PeerId { get; set; } = "";
+    public List<string> Monitors { get; set; } = new();
+    public string? Primary { get; set; }
+
+    public RemoteSelection Clone() => new() { PeerId = PeerId, Monitors = new List<string>(Monitors), Primary = Primary };
+}
+
+/// <summary>Monitor eines anderen PCs (von dort übermittelt, für Anzeige und gemeinsame Profile).</summary>
+public sealed class RemoteMonitor
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Tech { get; set; } = "";
+    public int Number { get; set; }
+    public bool Active { get; set; }
+    public bool Connected { get; set; }
+    /// <summary>In der Vorlage (alle Monitore an) enthalten → kann in Profilen genutzt werden.</summary>
+    public bool InMaster { get; set; }
+    public int X { get; set; }
+    public int Y { get; set; }
+    public int W { get; set; }
+    public int H { get; set; }
+    /// <summary>Teil der aktuellen Anzeige-Vorschau (CX..CH = Position darin).</summary>
+    public bool InCurrent { get; set; }
+    public int CX { get; set; }
+    public int CY { get; set; }
+    public int CW { get; set; }
+    public int CH { get; set; }
+    public bool CurrentPrimary { get; set; }
+
+    [JsonIgnore] public Rectangle MasterRect => new(X, Y, W, H);
+    [JsonIgnore] public Rectangle CurrentRect => new(CX, CY, CW, CH);
+}
+
+public sealed class RemoteDisplays
+{
+    public List<RemoteMonitor> Monitors { get; set; } = new();
+    public bool HasMaster { get; set; }
 }
 
 public sealed class KnownMonitor
@@ -96,6 +145,8 @@ public sealed class SharePeer
     public int Y { get; set; }
     public List<ShareScreen> Screens { get; set; } = new();
     public DateTime LastSeen { get; set; }
+    /// <summary>Zuletzt übermittelte Monitore dieses PCs (bleibt gespeichert, auch wenn er offline ist).</summary>
+    public RemoteDisplays? Displays { get; set; }
 }
 
 public sealed class ShareSettings

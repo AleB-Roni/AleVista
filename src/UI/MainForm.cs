@@ -346,7 +346,7 @@ internal sealed class MainForm : DarkForm
             card.MoreClicked += (c, anchor) => ShowCardMenu(c.Profile, anchor);
             _cards.Controls.Add(card);
         }
-        var add = new AddCard();
+        var add = new AddCard(_ctl.PeersWithDisplays().Count > 0 ? "Bildschirme auf die PCs verteilen" : "Monitore an-/abwählen");
         add.Click += (_, _) => NewProfile();
         _cards.Controls.Add(add);
         _cards.ResumeLayout();

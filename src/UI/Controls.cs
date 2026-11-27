@@ -222,9 +222,11 @@ internal sealed class ProfileCard : Control
 internal sealed class AddCard : Control
 {
     bool _hover;
+    readonly string _sub;
 
-    public AddCard()
+    public AddCard(string sub = "Monitore an-/abwählen")
     {
+        _sub = sub;
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
                  ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
         BackColor = Bg;
@@ -254,7 +256,7 @@ internal sealed class AddCard : Control
             TextFormatFlags.HorizontalCenter | TextFormatFlags.Bottom);
         TextRenderer.DrawText(g, "Neues Profil", Bold, new Rectangle(0, mid, Width, S(24)), c,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.Top);
-        TextRenderer.DrawText(g, "Monitore an-/abwählen", Small, new Rectangle(0, mid + S(24), Width, S(20)), TextDim,
+        TextRenderer.DrawText(g, _sub, Small, new Rectangle(0, mid + S(24), Width, S(20)), TextDim,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.Top);
     }
 }
@@ -316,5 +318,116 @@ internal sealed class MonitorRow : Control
         var subText = string.IsNullOrEmpty(_sub) ? state : _sub + "  ·  " + state;
         TextRenderer.DrawText(g, subText, Small, new Rectangle(x, S(24), w, S(18)), stateCol,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+    }
+}
+
+/// <summary>Ein Bildschirm im gemeinsamen Profil: per Klick wählen, welcher PC ihn bekommt (oder „Aus“).</summary>
+internal sealed class ScreenChoiceRow : Control
+{
+    public sealed record Option(string Label, string? Value, bool Enabled, Color Color);
+
+    readonly string _title, _sub;
+    readonly List<Option> _options;
+    readonly List<RectangleF> _rects = new();
+    int _selected, _hover = -1;
+
+    public event Action? SelectionChanged;
+
+    public ScreenChoiceRow(string title, string sub, List<Option> options, int selected, int width)
+    {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        BackColor = Bg;
+        _title = title;
+        _sub = sub;
+        _options = options;
+        _selected = Math.Clamp(selected, 0, options.Count - 1);
+        Size = new Size(width, S(78));
+        Margin = new Padding(0, 0, 0, S(6));
+    }
+
+    /// <summary>Wert der gewählten Option (null = „Aus“).</summary>
+    public string? Value => _options[_selected].Value;
+    public Option Selected => _options[_selected];
+
+    void Measure()
+    {
+        _rects.Clear();
+        float x = Sf(12), y = Height - Sf(12) - Sf(28);
+        foreach (var o in _options)
+        {
+            float w = TextRenderer.MeasureText(o.Label, Body, Size.Empty, TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine).Width + Sf(26);
+            _rects.Add(new RectangleF(x, y, w, Sf(28)));
+            x += w + Sf(6);
+        }
+    }
+
+    int IndexAt(Point p)
+    {
+        Measure();
+        return _rects.FindIndex(r => r.Contains(p));
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        int i = IndexAt(e.Location);
+        if (i >= 0 && !_options[i].Enabled) i = -1;
+        Cursor = i >= 0 ? Cursors.Hand : Cursors.Default;
+        if (i != _hover) { _hover = i; Invalidate(); }
+    }
+
+    protected override void OnMouseLeave(EventArgs e) { _hover = -1; Invalidate(); base.OnMouseLeave(e); }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        int i = IndexAt(e.Location);
+        if (i < 0 || !_options[i].Enabled || i == _selected) return;
+        _selected = i;
+        Invalidate();
+        SelectionChanged?.Invoke();
+    }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.Clear(BackColor);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        var sel = _options[_selected];
+        using (var path = Round(new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f), Sf(9)))
+        using (var b = new SolidBrush(Surface))
+        using (var pen = new Pen(sel.Value != null ? Color.FromArgb(150, sel.Color) : Border))
+        {
+            g.FillPath(b, path);
+            g.DrawPath(pen, path);
+        }
+
+        TextRenderer.DrawText(g, _title, Bold, new Rectangle(S(12), S(7), Width - S(24), S(22)), Theme.Text,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+        if (_sub.Length > 0)
+        {
+            var tw = TextRenderer.MeasureText(_title, Bold, Size.Empty, TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine).Width;
+            int sx = S(12) + tw + S(8);
+            TextRenderer.DrawText(g, _sub, Small, new Rectangle(sx, S(7), Math.Max(0, Width - sx - S(12)), S(22)), TextDim,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+        }
+
+        Measure();
+        for (int i = 0; i < _options.Count; i++)
+        {
+            var o = _options[i];
+            var r = _rects[i];
+            bool isSel = i == _selected;
+            Color fill = isSel ? (o.Value != null ? o.Color : Border) : i == _hover ? Theme.Mix(Surface2, Border, .6f) : Surface2;
+            Color text = isSel ? (o.Value != null ? AccentInk : Theme.Text) : o.Enabled ? Theme.Text : Theme.Mix(TextDim, Surface2, .4f);
+            using var p = Round(r, r.Height / 2);
+            using var b = new SolidBrush(fill);
+            using var pen = new Pen(isSel ? fill : Border);
+            g.FillPath(b, p);
+            g.DrawPath(pen, p);
+            TextRenderer.DrawText(g, o.Label, Body, Rectangle.Round(r), text,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+        }
     }
 }

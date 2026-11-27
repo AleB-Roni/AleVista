@@ -17,6 +17,7 @@ src/
   Program.cs            Einstieg, Single-Instance (Mutex + EventWaitHandle), CLI (--profile "Name", --tray)
   Native.cs             P/Invoke: CCD-API (QueryDisplayConfig/SetDisplayConfig), Hotkeys, DWM
   DisplayManager.cs     DisplaySnapshot (Pfade+Modi), Layout (Lücken schließen, Hauptmonitor auf 0,0), Apply()
+  Edid.cs               Physischer Bildschirm-Schlüssel aus der EDID (gleich auf allen PCs)
   Models.cs             Profile, KnownMonitor, AppSettings, AppData, Store (%APPDATA%\AleVista\data.json)
   AppController.cs      Logik zwischen API, Daten und UI; „Master“-Vorlage, Vorschau-Daten
   UI/Theme.cs           Dunkles Theme, Farben, DPI-Skalierung S(), Btn, Dark-Menü-Renderer
@@ -53,6 +54,7 @@ upload-to-github.bat          Upload für Windows
 - Threads: Einstellungen nur auf dem UI-Thread ändern; Hook/Netz lesen den Schnappschuss `ShareWorld`; Steuerzustand unter `_lock`. Keine `SendInput`-Aufrufe aus dem Hook-Callback (über `InputHook.Post`).
 - Doppelte Verbindungen: es bleibt die, die der PC mit der kleineren `MachineId` aufgebaut hat.
 - **Gemeinsame Profile**: PCs tauschen ihre Monitore als JSON aus (`Displays`, `RemoteDisplays` in `SharePeer.Displays` gespeichert). `Profile.Remote` = Monitorauswahl je anderem PC, `Profile.KeepLocal` = diesen PC nicht ändern. Aktivieren schickt `ApplyDisplays` (dort `AppController.ApplyMonitors`, ohne Bestätigungsdialog), Zurücksetzen `RevertDisplays`. Vorschau über alle PCs: `CombinedPreview` (Gruppe 0 = dieser PC grün, andere blau).
+- Profil-Editor mit verbundenen PCs: „Bildschirme verteilen“ – je physischem Bildschirm eine `ScreenChoiceRow` (PC 1 | PC 2 | Aus). Gleicher Bildschirm an mehreren PCs = gleicher `Edid.PhysicalKey` (Modell + Seriennummer aus der EDID in der Registry); kommt ein Schlüssel an einem PC doppelt vor, wird nicht zusammengefasst (`AppController.ScreenGroups`). Ein PC ohne Bildschirm bleibt unverändert (`KeepLocal` bzw. keine `RemoteSelection`).
 
 ## Bauen
 - Lokal (Windows, .NET 8 SDK):

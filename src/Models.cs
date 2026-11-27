@@ -80,6 +80,8 @@ public sealed class RemoteMonitor
     public int CW { get; set; }
     public int CH { get; set; }
     public bool CurrentPrimary { get; set; }
+    /// <summary>Hersteller/Modell/Seriennummer aus der EDID – gleich auf allen PCs, an denen der Bildschirm hängt.</summary>
+    public string? PhysicalKey { get; set; }
 
     [JsonIgnore] public Rectangle MasterRect => new(X, Y, W, H);
     [JsonIgnore] public Rectangle CurrentRect => new(CX, CY, CW, CH);

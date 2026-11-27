@@ -3,6 +3,24 @@ namespace AleVista;
 /// <param name="Group">0 = dieser PC, 1… = andere PCs (werden in der Vorschau anders eingefärbt).</param>
 public sealed record PreviewItem(Rectangle Bounds, string Label, int Number, bool Enabled, bool Primary, int Group = 0);
 
+/// <summary>Ein physischer Bildschirm und an welchen PCs er hängt.</summary>
+public sealed class ScreenGroup
+{
+    public string Name { get; set; } = "";
+    public List<ScreenMember> Members { get; set; } = new();
+}
+
+public sealed class ScreenMember
+{
+    /// <summary>"" = dieser PC, sonst ID des anderen PCs.</summary>
+    public string PcId { get; set; } = "";
+    public string MonitorId { get; set; } = "";
+    public int Number { get; set; }
+    /// <summary>In der Vorlage des PCs → kann eingeschaltet werden.</summary>
+    public bool Usable { get; set; }
+    public bool Active { get; set; }
+}
+
 /// <summary>Vorschau, ggf. aus mehreren PCs zusammengesetzt (Gruppenname je PC).</summary>
 public sealed class CombinedPreview
 {
@@ -217,6 +235,7 @@ public sealed class AppController
                 Number = NumberOf(id),
                 Active = IsActive(id),
                 Connected = IsConnected(id),
+                PhysicalKey = Edid.PhysicalKey(id),
             };
             int mi = Master?.IndexOf(id) ?? -1;
             var mr = mi >= 0 ? Master!.SourceRect(mi) : null;
@@ -234,6 +253,40 @@ public sealed class AppController
             d.Monitors.Add(m);
         }
         return d;
+    }
+
+    /// <summary>
+    /// Alle Bildschirme über alle PCs. Ein Bildschirm, der an mehreren PCs hängt (gleiche EDID), erscheint nur einmal
+    /// mit einem Eintrag je PC. PcId "" = dieser PC.
+    /// </summary>
+    public List<ScreenGroup> ScreenGroups(IEnumerable<SharePeer> peers)
+    {
+        var entries = new List<(string key, ScreenMember m, string name)>();
+        foreach (var id in OrderedMonitors())
+        {
+            if (!InMaster(id) && !IsConnected(id)) continue;
+            entries.Add((Edid.PhysicalKey(id) ?? "local:" + id,
+                new ScreenMember { PcId = "", MonitorId = id, Number = NumberOf(id), Usable = InMaster(id), Active = IsActive(id) },
+                NameOf(id)));
+        }
+        foreach (var peer in peers)
+            foreach (var m in peer.Displays?.Monitors ?? new())
+                entries.Add((string.IsNullOrEmpty(m.PhysicalKey) ? $"{peer.Id}:{m.Id}" : m.PhysicalKey!,
+                    new ScreenMember { PcId = peer.Id, MonitorId = m.Id, Number = m.Number, Usable = m.InMaster, Active = m.Active },
+                    m.Name));
+
+        var groups = new List<ScreenGroup>();
+        foreach (var g in entries.GroupBy(e => e.key))
+        {
+            var list = g.ToList();
+            // Gleicher Schlüssel zweimal am selben PC (z. B. zwei gleiche Monitore ohne Seriennummer) → nicht zusammenfassen
+            bool ambiguous = list.GroupBy(e => e.m.PcId).Any(x => x.Count() > 1);
+            if (ambiguous)
+                foreach (var e in list) groups.Add(new ScreenGroup { Name = e.name, Members = { e.m } });
+            else
+                groups.Add(new ScreenGroup { Name = list[0].name, Members = list.Select(e => e.m).ToList() });
+        }
+        return groups;
     }
 
     /// <summary>Auftrag eines anderen PCs: genau diese Monitore einschalten (aus der Vorlage abgeleitet).</summary>

@@ -17,6 +17,7 @@ internal sealed class ProfileEditorForm : DarkForm
 
     readonly AppController _ctl;
     readonly Profile _profile;
+    readonly Profile _identity; // das Original in der Profilliste (_profile ist eine Arbeitskopie)
     readonly TextBox _name;
     readonly List<(string id, CheckBox cb)> _checks = new();              // nur dieser PC
     readonly List<(ScreenGroup group, ScreenChoiceRow row)> _rows = new(); // mehrere PCs
@@ -29,10 +30,11 @@ internal sealed class ProfileEditorForm : DarkForm
 
     bool MultiPc => _peers.Count > 0;
 
-    public ProfileEditorForm(AppController ctl, Profile profile, bool isNew)
+    public ProfileEditorForm(AppController ctl, Profile profile, bool isNew, Profile? identity = null)
     {
         _ctl = ctl;
         _profile = profile;
+        _identity = identity ?? profile;
         _originalSet = new HashSet<string>(profile.Monitors, StringComparer.OrdinalIgnoreCase);
         _peers = ctl.PeersWithDisplays();
 
@@ -69,7 +71,7 @@ internal sealed class ProfileEditorForm : DarkForm
         _hotkey.Items.Add(new Item { Id = "0", Label = "Keins" });
         for (int i = 1; i <= 9; i++)
         {
-            var owner = ctl.Data.Profiles.FirstOrDefault(p => p != profile && p.Hotkey == i);
+            var owner = ctl.Data.Profiles.FirstOrDefault(p => p != _identity && p.Hotkey == i);
             _hotkey.Items.Add(new Item { Id = i.ToString(), Label = $"Strg+Alt+{i}" + (owner != null ? $"  (von „{owner.Name}“ übernehmen)" : "") });
         }
         _hotkey.SelectedIndex = profile.Hotkey is >= 1 and <= 9 ? profile.Hotkey : 0;
@@ -165,11 +167,17 @@ internal sealed class ProfileEditorForm : DarkForm
 
     int BuildScreenRows(int left, int y, int colW, bool isNew)
     {
-        Controls.Add(MakeLabel("BILDSCHIRME VERTEILEN", Section, TextDim, new Point(left, y), colW));
-        y += S(22);
-        Controls.Add(MakeLabel("Wähle bei jedem Bildschirm, welcher PC ihn in diesem Profil bekommt – oder „Aus“.",
-            Small, TextDim, new Point(left, y), colW, S(20)));
-        y += S(26);
+        Controls.Add(MakeLabel("BILDSCHIRME VERTEILEN", Section, TextDim, new Point(left, y + S(6)), colW));
+        var link = new Btn("Zuordnung ändern …") { Height = S(28), Font = Small };
+        link.FitWidth();
+        link.Location = new Point(left + colW - link.Width, y);
+        link.Click += (_, _) => ChangeLinks(link);
+        Controls.Add(link);
+        y += S(34);
+        Controls.Add(MakeLabel("Wähle bei jedem Bildschirm, welcher PC ihn in diesem Profil bekommt – oder „Aus“. " +
+            "Erscheint ein Bildschirm doppelt, über „Zuordnung ändern …“ festlegen, dass es derselbe ist.",
+            Small, TextDim, new Point(left, y), colW, S(36)));
+        y += S(42);
 
         foreach (var g in _ctl.ScreenGroups(_peers))
         {
@@ -193,6 +201,34 @@ internal sealed class ProfileEditorForm : DarkForm
             y += row.Height + S(6);
         }
         return y;
+    }
+
+    void ChangeLinks(Control anchor)
+    {
+        void Open(SharePeer peer)
+        {
+            if (!MonitorLinkForm.Edit(this, _ctl, peer)) return;
+            // Bisherige Eingaben übernehmen und den Editor mit der neuen Zuordnung neu aufbauen
+            ApplyDraft(Draft());
+            DialogResult = DialogResult.Retry;
+            Close();
+        }
+        if (_peers.Count == 1) { Open(_peers[0]); return; }
+        var m = DarkMenu();
+        foreach (var p in _peers) { var peer = p; m.Items.Add(peer.Name.Replace("&", "&&"), null, (_, _) => Open(peer)); }
+        m.Closed += (_, _) => BeginInvoke(new Action(m.Dispose));
+        m.Show(anchor, new Point(0, anchor.Height + S(4)));
+    }
+
+    void ApplyDraft(Profile d)
+    {
+        _profile.Name = d.Name;
+        _profile.Monitors = d.Monitors;
+        _profile.Primary = d.Primary;
+        _profile.Fixed = d.Fixed;
+        _profile.Hotkey = d.Hotkey;
+        _profile.KeepLocal = d.KeepLocal;
+        _profile.Remote = d.Remote;
     }
 
     bool IsOnInProfile(ScreenMember m, bool isNew)
@@ -312,16 +348,10 @@ internal sealed class ProfileEditorForm : DarkForm
         }
         else if (d.Monitors.Count == 0) { MessageBox.Show(this, "Mindestens ein Monitor muss in dem Profil an sein.", "AleVista"); return; }
 
-        _profile.Name = d.Name;
-        _profile.Monitors = d.Monitors;
-        _profile.Primary = d.Primary;
-        _profile.Fixed = d.Fixed;
-        _profile.Hotkey = d.Hotkey;
-        _profile.KeepLocal = d.KeepLocal;
-        _profile.Remote = d.Remote;
+        ApplyDraft(d);
         if (d.Hotkey > 0)
             foreach (var other in _ctl.Data.Profiles)
-                if (other != _profile && other.Hotkey == d.Hotkey) other.Hotkey = 0;
+                if (other != _identity && other.Hotkey == d.Hotkey) other.Hotkey = 0;
 
         DialogResult = DialogResult.OK;
         Close();

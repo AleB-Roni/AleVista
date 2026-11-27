@@ -255,36 +255,104 @@ public sealed class AppController
         return d;
     }
 
+    /// <summary>Monitore dieses PCs, die in Profilen vorkommen können.</summary>
+    public List<string> LocalScreenIds() => OrderedMonitors().Where(id => InMaster(id) || IsConnected(id)).ToList();
+
+    /// <summary>Hersteller-/Modellkürzel aus der Monitor-ID (z. B. „GSM5B09“).</summary>
+    public static string? ModelOf(string id)
+    {
+        var parts = id.TrimStart('\\', '?').Split('#');
+        return parts.Length >= 3 && parts[0].Equals("DISPLAY", StringComparison.OrdinalIgnoreCase) ? parts[1].ToUpperInvariant() : null;
+    }
+
+    /// <summary>EDID-Schlüssel nur, wenn er eine echte Seriennummer enthält.</summary>
+    static string? StrongKey(string? phys)
+    {
+        if (phys == null) return null;
+        var p = phys.Split(':');
+        if (p.Length < 3 || (p[1] == "00000000" && p[2].Length == 0)) return null;
+        return phys.ToUpperInvariant();
+    }
+
+    /// <summary>Kurzbeschreibung zur Unterscheidung gleicher Monitore, z. B. „SN 204NTXR1A123“.</summary>
+    public static string SerialText(string? phys)
+    {
+        if (phys == null) return "";
+        var p = phys.Split(':');
+        if (p.Length < 3) return "";
+        if (p[2].Length > 0) return "SN " + p[2];
+        return p[1] != "00000000" ? "SN " + p[1] : "";
+    }
+
     /// <summary>
-    /// Alle Bildschirme über alle PCs. Ein Bildschirm, der an mehreren PCs hängt (gleiche EDID), erscheint nur einmal
-    /// mit einem Eintrag je PC. PcId "" = dieser PC.
+    /// Welcher Monitor des anderen PCs ist welcher Monitor hier? (dort → hier)
+    /// Erst manuelle Zuordnung, dann automatisch: Seriennummer (EDID) → Modell → Name, jeweils nur bei eindeutigem Treffer.
+    /// </summary>
+    public Dictionary<string, string> MonitorLinks(SharePeer peer, bool useManual = true)
+    {
+        var result = new Dictionary<string, string>(Cmp);
+        var local = LocalScreenIds();
+        var used = new HashSet<string>(Cmp);
+        var pending = new List<RemoteMonitor>();
+        foreach (var m in peer.Displays?.Monitors ?? new())
+        {
+            if (useManual && peer.Links.TryGetValue(m.Id, out var l))
+            {
+                if (l.Length > 0 && local.Contains(l, Cmp) && used.Add(l)) result[m.Id] = l;
+                continue;
+            }
+            pending.Add(m);
+        }
+
+        void Stage(Func<string, string?> localKey, Func<RemoteMonitor, string?> remoteKey)
+        {
+            var lk = local.Where(id => !used.Contains(id)).Select(id => (id, k: localKey(id))).Where(x => !string.IsNullOrEmpty(x.k)).ToList();
+            var rk = pending.Where(m => !result.ContainsKey(m.Id)).Select(m => (m, k: remoteKey(m))).Where(x => !string.IsNullOrEmpty(x.k)).ToList();
+            foreach (var g in rk.GroupBy(x => x.k!, StringComparer.OrdinalIgnoreCase))
+            {
+                if (g.Count() != 1) continue;
+                var hits = lk.Where(x => string.Equals(x.k, g.Key, StringComparison.OrdinalIgnoreCase)).ToList();
+                if (hits.Count != 1 || used.Contains(hits[0].id)) continue;
+                result[g.First().m.Id] = hits[0].id;
+                used.Add(hits[0].id);
+            }
+        }
+        Stage(id => StrongKey(Edid.PhysicalKey(id)), m => StrongKey(m.PhysicalKey));
+        Stage(ModelOf, m => ModelOf(m.Id));
+        Stage(id => Known(id)?.FriendlyName, m => m.Name);
+        Stage(NameOf, m => m.Name);
+        return result;
+    }
+
+    /// <summary>
+    /// Alle Bildschirme über alle PCs. Ein Bildschirm, der an mehreren PCs hängt, erscheint nur einmal
+    /// mit einem Eintrag je PC (Zuordnung siehe <see cref="MonitorLinks"/>). PcId "" = dieser PC.
     /// </summary>
     public List<ScreenGroup> ScreenGroups(IEnumerable<SharePeer> peers)
     {
-        var entries = new List<(string key, ScreenMember m, string name)>();
-        foreach (var id in OrderedMonitors())
+        var groups = new List<ScreenGroup>();
+        var byLocal = new Dictionary<string, ScreenGroup>(Cmp);
+        foreach (var id in LocalScreenIds())
         {
-            if (!InMaster(id) && !IsConnected(id)) continue;
-            entries.Add((Edid.PhysicalKey(id) ?? "local:" + id,
-                new ScreenMember { PcId = "", MonitorId = id, Number = NumberOf(id), Usable = InMaster(id), Active = IsActive(id) },
-                NameOf(id)));
+            var g = new ScreenGroup
+            {
+                Name = NameOf(id),
+                Members = { new ScreenMember { PcId = "", MonitorId = id, Number = NumberOf(id), Usable = InMaster(id), Active = IsActive(id) } },
+            };
+            groups.Add(g);
+            byLocal[id] = g;
         }
         foreach (var peer in peers)
-            foreach (var m in peer.Displays?.Monitors ?? new())
-                entries.Add((string.IsNullOrEmpty(m.PhysicalKey) ? $"{peer.Id}:{m.Id}" : m.PhysicalKey!,
-                    new ScreenMember { PcId = peer.Id, MonitorId = m.Id, Number = m.Number, Usable = m.InMaster, Active = m.Active },
-                    m.Name));
-
-        var groups = new List<ScreenGroup>();
-        foreach (var g in entries.GroupBy(e => e.key))
         {
-            var list = g.ToList();
-            // Gleicher Schlüssel zweimal am selben PC (z. B. zwei gleiche Monitore ohne Seriennummer) → nicht zusammenfassen
-            bool ambiguous = list.GroupBy(e => e.m.PcId).Any(x => x.Count() > 1);
-            if (ambiguous)
-                foreach (var e in list) groups.Add(new ScreenGroup { Name = e.name, Members = { e.m } });
-            else
-                groups.Add(new ScreenGroup { Name = list[0].name, Members = list.Select(e => e.m).ToList() });
+            var links = MonitorLinks(peer);
+            foreach (var m in peer.Displays?.Monitors ?? new())
+            {
+                var member = new ScreenMember { PcId = peer.Id, MonitorId = m.Id, Number = m.Number, Usable = m.InMaster, Active = m.Active };
+                if (links.TryGetValue(m.Id, out var lid) && byLocal.TryGetValue(lid, out var g) && g.Members.All(x => x.PcId != peer.Id))
+                    g.Members.Add(member);
+                else
+                    groups.Add(new ScreenGroup { Name = m.Name, Members = { member } });
+            }
         }
         return groups;
     }

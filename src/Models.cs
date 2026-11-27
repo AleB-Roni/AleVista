@@ -36,6 +36,26 @@ public sealed class Profile
     /// <summary>Gemeinsames Profil: welche Monitore auf anderen PCs (Maus &amp; Tastatur teilen) an sein sollen.</summary>
     public List<RemoteSelection> Remote { get; set; } = new();
 
+    /// <summary>Arbeitskopie (gleiche ID) für den Editor.</summary>
+    public Profile Copy()
+    {
+        var c = Duplicate(Name);
+        c.Id = Id;
+        c.Hotkey = Hotkey;
+        return c;
+    }
+
+    public void CopyFrom(Profile o)
+    {
+        Name = o.Name;
+        Monitors = new List<string>(o.Monitors);
+        Primary = o.Primary;
+        Fixed = o.Fixed?.Clone();
+        Hotkey = o.Hotkey;
+        KeepLocal = o.KeepLocal;
+        Remote = o.Remote.Select(r => r.Clone()).ToList();
+    }
+
     public Profile Duplicate(string newName) => new()
     {
         Name = newName,
@@ -149,6 +169,8 @@ public sealed class SharePeer
     public DateTime LastSeen { get; set; }
     /// <summary>Zuletzt übermittelte Monitore dieses PCs (bleibt gespeichert, auch wenn er offline ist).</summary>
     public RemoteDisplays? Displays { get; set; }
+    /// <summary>Manuelle Zuordnung: Monitor-ID dort → Monitor-ID hier ("" = eigener Bildschirm, nur dort).</summary>
+    public Dictionary<string, string> Links { get; set; } = new();
 }
 
 public sealed class ShareSettings

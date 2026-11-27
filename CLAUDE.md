@@ -52,6 +52,7 @@ upload-to-github.bat          Upload für Windows
 - Der **steuernde** PC rechnet alles: Cursor wird geparkt, Deltas aus dem LL-Hook → virtuelle Position im Ziel-PC → absolute Position wird geschickt. Ziel-PC spielt per `SendInput` nach. Eigene Hooks ignorieren injizierte Ereignisse (`LLMHF_INJECTED`).
 - Threads: Einstellungen nur auf dem UI-Thread ändern; Hook/Netz lesen den Schnappschuss `ShareWorld`; Steuerzustand unter `_lock`. Keine `SendInput`-Aufrufe aus dem Hook-Callback (über `InputHook.Post`).
 - Doppelte Verbindungen: es bleibt die, die der PC mit der kleineren `MachineId` aufgebaut hat.
+- **Gemeinsame Profile**: PCs tauschen ihre Monitore als JSON aus (`Displays`, `RemoteDisplays` in `SharePeer.Displays` gespeichert). `Profile.Remote` = Monitorauswahl je anderem PC, `Profile.KeepLocal` = diesen PC nicht ändern. Aktivieren schickt `ApplyDisplays` (dort `AppController.ApplyMonitors`, ohne Bestätigungsdialog), Zurücksetzen `RevertDisplays`. Vorschau über alle PCs: `CombinedPreview` (Gruppe 0 = dieser PC grün, andere blau).
 
 ## Bauen
 - Lokal (Windows, .NET 8 SDK):

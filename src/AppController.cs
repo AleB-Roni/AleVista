@@ -1,6 +1,14 @@
 namespace AleVista;
 
-public sealed record PreviewItem(Rectangle Bounds, string Label, int Number, bool Enabled, bool Primary);
+/// <param name="Group">0 = dieser PC, 1… = andere PCs (werden in der Vorschau anders eingefärbt).</param>
+public sealed record PreviewItem(Rectangle Bounds, string Label, int Number, bool Enabled, bool Primary, int Group = 0);
+
+/// <summary>Vorschau, ggf. aus mehreren PCs zusammengesetzt (Gruppenname je PC).</summary>
+public sealed class CombinedPreview
+{
+    public List<PreviewItem> Items { get; } = new();
+    public Dictionary<int, string> Groups { get; } = new();
+}
 
 /// <summary>Logik zwischen Windows-Anzeige-API, gespeicherten Daten und Oberfläche.</summary>
 public sealed class AppController
@@ -14,6 +22,9 @@ public sealed class AppController
     public string? LastError { get; private set; }
 
     public event Action? Changed;
+
+    /// <summary>Ist ein anderer PC gerade verbunden? (wird vom Hauptfenster gesetzt)</summary>
+    public Func<string, bool> IsPeerOnline { get; set; } = _ => false;
 
     public AppController(AppData data)
     {
@@ -157,14 +168,163 @@ public sealed class AppController
 
     public ApplyResult Apply(Profile p)
     {
+        if (p.KeepLocal)
+            return ApplyResult.Fail("Dieses Profil schaltet nur andere PCs um – das geht nur über das laufende AleVista (Fenster, Tray oder Tastenkürzel).");
         var s = BuildSnapshot(p);
         if (s == null)
             return ApplyResult.Fail("Für dieses Profil fehlt die Vorlage. Bitte einmal „Alle aktivieren & einlesen“ ausführen.");
         return DisplayManager.Apply(s);
     }
 
-    public bool IsProfileActive(Profile p) =>
-        Current != null && Current.Count > 0 && Current.MonitorSet().SetEquals(p.Monitors);
+    public bool IsProfileActive(Profile p)
+    {
+        bool any = false;
+        if (!p.KeepLocal)
+        {
+            if (Current == null || Current.Count == 0 || !Current.MonitorSet().SetEquals(p.Monitors)) return false;
+            any = true;
+        }
+        foreach (var r in p.Remote)
+        {
+            var peer = Peer(r.PeerId);
+            if (peer?.Displays == null || !IsPeerOnline(r.PeerId)) return false;
+            var active = new HashSet<string>(peer.Displays.Monitors.Where(m => m.Active).Select(m => m.Id), Cmp);
+            if (!active.SetEquals(r.Monitors)) return false;
+            any = true;
+        }
+        return any;
+    }
+
+    // ---------- Andere PCs (gemeinsame Profile) ----------
+
+    public SharePeer? Peer(string id) => Data.Share.Peers.FirstOrDefault(p => p.Id == id);
+
+    /// <summary>Andere PCs, deren Monitore bekannt sind.</summary>
+    public List<SharePeer> PeersWithDisplays() => Data.Share.Peers.Where(p => p.Displays != null && p.Displays.Monitors.Count > 0).ToList();
+
+    /// <summary>Monitore dieses PCs für andere PCs beschreiben.</summary>
+    public RemoteDisplays ExportDisplays()
+    {
+        var d = new RemoteDisplays { HasMaster = Master != null };
+        var cur = CurrentLayout().ToDictionary(c => c.Id, c => c, Cmp);
+        foreach (var id in OrderedMonitors())
+        {
+            var m = new RemoteMonitor
+            {
+                Id = id,
+                Name = NameOf(id),
+                Tech = TechOf(id),
+                Number = NumberOf(id),
+                Active = IsActive(id),
+                Connected = IsConnected(id),
+            };
+            int mi = Master?.IndexOf(id) ?? -1;
+            var mr = mi >= 0 ? Master!.SourceRect(mi) : null;
+            if (mr != null)
+            {
+                m.InMaster = true;
+                m.X = mr.Value.X; m.Y = mr.Value.Y; m.W = mr.Value.Width; m.H = mr.Value.Height;
+            }
+            if (cur.TryGetValue(id, out var c))
+            {
+                m.InCurrent = true;
+                m.CX = c.Rect.X; m.CY = c.Rect.Y; m.CW = c.Rect.Width; m.CH = c.Rect.Height;
+                m.CurrentPrimary = c.Primary;
+            }
+            d.Monitors.Add(m);
+        }
+        return d;
+    }
+
+    /// <summary>Auftrag eines anderen PCs: genau diese Monitore einschalten (aus der Vorlage abgeleitet).</summary>
+    public ApplyResult ApplyMonitors(List<string> monitors, string? primary)
+    {
+        var known = monitors.Where(InMaster).Distinct(Cmp).ToList();
+        if (known.Count == 0) return ApplyResult.Fail("Keiner der gewünschten Monitore ist hier in der Vorlage. Bitte dort einmal „Alle aktivieren & einlesen“.");
+        return Apply(new Profile { Name = "Gemeinsames Profil", Monitors = known, Primary = primary });
+    }
+
+    static List<PreviewItem> RemoteItems(RemoteDisplays d, HashSet<string>? on, int group)
+    {
+        var items = new List<PreviewItem>();
+        foreach (var m in d.Monitors)
+        {
+            if (on == null)
+            {
+                if (m.InCurrent && m.CW > 0)
+                    items.Add(new PreviewItem(m.CurrentRect, m.Name, m.Number, m.Active, m.CurrentPrimary, group));
+            }
+            else if (m.InMaster && m.W > 0)
+                items.Add(new PreviewItem(m.MasterRect, m.Name, m.Number, on.Contains(m.Id), false, group));
+        }
+        return items;
+    }
+
+    /// <summary>Setzt die Gruppen nebeneinander (andere PCs je nach Anordnung links oder rechts von diesem PC).</summary>
+    static void Append(CombinedPreview cp, List<PreviewItem> items, int group, string name, bool left)
+    {
+        if (items.Count == 0) return;
+        cp.Groups[group] = name;
+        if (cp.Items.Count == 0) { cp.Items.AddRange(items); return; }
+        var u = Union(cp.Items);
+        var r = Union(items);
+        int gap = Math.Max(160, Math.Max(u.Height, r.Height) / 5);
+        int dx = left ? u.Left - gap - r.Right : u.Right + gap - r.Left;
+        int dy = u.Top - r.Top;
+        foreach (var it in items)
+        {
+            var b = it.Bounds;
+            b.Offset(dx, dy);
+            cp.Items.Add(it with { Bounds = b });
+        }
+    }
+
+    static Rectangle Union(List<PreviewItem> items)
+    {
+        var u = items[0].Bounds;
+        foreach (var i in items) u = Rectangle.Union(u, i.Bounds);
+        return u;
+    }
+
+    /// <summary>Vorschau eines (ggf. gemeinsamen) Profils über alle PCs.</summary>
+    public CombinedPreview CombinedPreviewFor(Profile p)
+    {
+        var cp = new CombinedPreview();
+        var local = PreviewFor(p);
+        if (p.KeepLocal) local = local.Select(i => i with { Enabled = false, Primary = false }).ToList();
+        int g = 1;
+        bool remote = false;
+        var parts = new List<(List<PreviewItem>, int, string, bool)>();
+        foreach (var r in p.Remote)
+        {
+            var peer = Peer(r.PeerId);
+            if (peer?.Displays == null) continue;
+            var items = RemoteItems(peer.Displays, new HashSet<string>(r.Monitors, Cmp), g);
+            parts.Add((items, g, peer.Name, peer.X < 0));
+            remote = true;
+            g++;
+        }
+        Append(cp, local, 0, p.KeepLocal ? "Dieser PC (unverändert)" : "Dieser PC", false);
+        foreach (var (items, grp, name, left) in parts) Append(cp, items, grp, name, left);
+        if (!remote) cp.Groups.Clear();
+        return cp;
+    }
+
+    /// <summary>Aktuelle Anordnung dieses PCs und aller verbundenen PCs.</summary>
+    public CombinedPreview CombinedCurrent()
+    {
+        var cp = new CombinedPreview();
+        Append(cp, PreviewCurrent(), 0, "Dieser PC", false);
+        int g = 1;
+        foreach (var peer in PeersWithDisplays())
+        {
+            if (!IsPeerOnline(peer.Id)) continue;
+            Append(cp, RemoteItems(peer.Displays!, null, g), g, peer.Name, peer.X < 0);
+            g++;
+        }
+        if (g == 1) cp.Groups.Clear();
+        return cp;
+    }
 
     public List<PreviewItem> PreviewFor(Profile p)
     {
@@ -197,9 +357,12 @@ public sealed class AppController
         return items;
     }
 
-    public List<PreviewItem> PreviewCurrent()
+    public List<PreviewItem> PreviewCurrent() =>
+        CurrentLayout().Select(c => new PreviewItem(c.Rect, NameOf(c.Id), NumberOf(c.Id), c.Enabled, c.Primary)).ToList();
+
+    List<(string Id, Rectangle Rect, bool Enabled, bool Primary)> CurrentLayout()
     {
-        var items = new List<PreviewItem>();
+        var items = new List<(string, Rectangle, bool, bool)>();
         if (Current == null) return items;
         var prim = Current.PrimaryMonitorId();
         var useMaster = Master != null && Master.MonitorSet().IsSupersetOf(Current.MonitorSet());
@@ -210,7 +373,8 @@ public sealed class AppController
             var r = src.SourceRect(i);
             if (r == null) continue;
             var id = src.MonitorIds[i];
-            items.Add(new PreviewItem(r.Value, NameOf(id), NumberOf(id), active.Contains(id), Cmp.Equals(id, prim)));
+            if (items.Any(x => Cmp.Equals(x.Item1, id))) continue;
+            items.Add((id, r.Value, active.Contains(id), Cmp.Equals(id, prim)));
         }
         return items;
     }

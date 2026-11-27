@@ -109,6 +109,8 @@ internal sealed class MainForm : DarkForm
         _sharePage = new SharePage(_share, _ctl, this, SetStatus) { Dock = DockStyle.Fill, Visible = false };
         _share.Changed += () => { if (!IsDisposed) { _sharePage.RefreshAll(); RebuildTrayMenu(); } };
         _share.Notice += SetStatus;
+        _share.DisplaysChanged += () => { if (!IsDisposed) RebuildAll(); };
+        _ctl.IsPeerOnline = id => _share.IsConnected(id);
 
         _tabs = new TabStrip("Monitorprofile", "Maus & Tastatur teilen") { Dock = DockStyle.Top };
         _tabs.SelectedChanged += ShowTab;
@@ -291,11 +293,12 @@ internal sealed class MainForm : DarkForm
 
     void RebuildAll()
     {
-        _currentPreview.Items = _ctl.PreviewCurrent();
+        _currentPreview.Combined = _ctl.CombinedCurrent();
         RebuildMonitorList();
         RebuildCards();
         RebuildTrayMenu();
         RegisterHotkeys();
+        _share.PublishDisplays();
     }
 
     void RebuildMonitorList()
@@ -310,6 +313,22 @@ internal sealed class MainForm : DarkForm
             var monitorId = id;
             row.RenameClicked += () => RenameMonitor(monitorId);
             _monitorList.Controls.Add(row);
+        }
+
+        // Monitore der verbundenen PCs (Maus & Tastatur teilen)
+        foreach (var peer in _ctl.PeersWithDisplays())
+        {
+            if (!_share.IsConnected(peer.Id)) continue;
+            _monitorList.Controls.Add(new Label
+            {
+                Text = peer.Name.ToUpperInvariant(),
+                Font = Section, ForeColor = Peer, BackColor = Bg, UseMnemonic = false, AutoEllipsis = true,
+                AutoSize = false, Size = new Size(Math.Max(S(200), w), S(24)), Margin = new Padding(S(2), S(6), 0, 0),
+                TextAlign = ContentAlignment.BottomLeft,
+            });
+            foreach (var m in peer.Displays!.Monitors)
+                _monitorList.Controls.Add(new MonitorRow(m.Number, m.Name, m.Tech, m.Active, m.Connected, Math.Max(S(200), w),
+                    canRename: false, remote: true));
         }
         _monitorList.ResumeLayout();
     }
@@ -405,8 +424,26 @@ internal sealed class MainForm : DarkForm
     {
         if (_applying) return;
         _applying = true;
+        var sentTo = new List<string>();
         try
         {
+            // Gemeinsames Profil: zuerst die anderen PCs umschalten (läuft dort parallel)
+            var offline = new List<string>();
+            foreach (var sel in p.Remote)
+            {
+                if (sel.Monitors.Count == 0) continue;
+                var name = _ctl.Peer(sel.PeerId)?.Name ?? "anderer PC";
+                if (_share.RequestApply(sel.PeerId, sel.Monitors, sel.Primary)) sentTo.Add(sel.PeerId);
+                else offline.Add(name);
+            }
+            string remoteNote = offline.Count > 0 ? $" Nicht verbunden: {string.Join(", ", offline)}." : "";
+            if (p.KeepLocal)
+            {
+                SetStatus(sentTo.Count > 0 ? $"„{p.Name}“: andere PCs werden umgeschaltet …{remoteNote}" : $"„{p.Name}“: kein beteiligter PC verbunden.{remoteNote}");
+                if (sentTo.Count == 0) ShowError($"„{p.Name}“ konnte nicht angewendet werden – {string.Join(", ", offline)} {(offline.Count == 1 ? "ist" : "sind")} nicht verbunden.");
+                return;
+            }
+
             DisplaySnapshot? before = null;
             try { before = DisplayManager.CaptureActive(); } catch { }
 
@@ -420,7 +457,7 @@ internal sealed class MainForm : DarkForm
                 SetStatus(r.Message);
                 return;
             }
-            SetStatus($"„{p.Name}“ aktiv. {r.Message}");
+            SetStatus($"„{p.Name}“ aktiv. {r.Message}{remoteNote}");
 
             if (_ctl.Data.Settings.ConfirmAfterSwitch && before != null)
             {
@@ -432,6 +469,7 @@ internal sealed class MainForm : DarkForm
                     if (dlg.ShowDialog() != DialogResult.OK)
                     {
                         var rr = DisplayManager.Apply(before);
+                        foreach (var id in sentTo) _share.RequestRevert(id);
                         SetStatus(rr.Ok ? "Vorherige Anordnung wiederhergestellt." : "Zurücksetzen fehlgeschlagen: " + rr.Message);
                     }
                 }

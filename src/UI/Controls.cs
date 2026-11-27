@@ -7,7 +7,16 @@ namespace AleVista;
 internal sealed class LayoutPreview : Control
 {
     List<PreviewItem> _items = new();
-    public List<PreviewItem> Items { get => _items; set { _items = value ?? new(); Invalidate(); } }
+    Dictionary<int, string> _groups = new();
+    public List<PreviewItem> Items { get => _items; set { _items = value ?? new(); _groups = new(); Invalidate(); } }
+
+    /// <summary>Vorschau über mehrere PCs (mit PC-Namen über jeder Gruppe).</summary>
+    public CombinedPreview Combined
+    {
+        set { _items = value.Items; _groups = value.Groups; Invalidate(); }
+    }
+
+    static Color GroupColor(int group) => group == 0 ? Accent : Peer;
     public string EmptyText { get; set; } = "Keine Monitore erkannt";
 
     public LayoutPreview()
@@ -39,10 +48,24 @@ internal sealed class LayoutPreview : Control
         if (union.Width <= 0 || union.Height <= 0) return;
 
         float pad = Sf(12);
-        float availW = Width - pad * 2, availH = Height - pad * 2;
+        float capH = _groups.Count > 1 ? TextRenderer.MeasureText("Ag", Small).Height + Sf(2) : 0;
+        float availW = Width - pad * 2, availH = Height - pad * 2 - capH;
         float scale = Math.Min(availW / union.Width, availH / union.Height);
         float ox = pad + (availW - union.Width * scale) / 2f;
-        float oy = pad + (availH - union.Height * scale) / 2f;
+        float oy = pad + capH + (availH - union.Height * scale) / 2f;
+
+        if (capH > 0)
+            foreach (var (group, name) in _groups)
+            {
+                var gi = _items.Where(i => i.Group == group).ToList();
+                if (gi.Count == 0) continue;
+                var gu = gi[0].Bounds;
+                foreach (var i in gi) gu = Rectangle.Union(gu, i.Bounds);
+                var cr = new Rectangle((int)(ox + (gu.X - union.X) * scale), (int)(oy + (gu.Y - union.Y) * scale - capH),
+                    Math.Max(S(40), (int)(gu.Width * scale)), (int)capH);
+                TextRenderer.DrawText(g, name, Small, cr, GroupColor(group),
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.Bottom | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            }
         float gap = Math.Max(1.5f, Sf(2));
 
         foreach (var it in _items.OrderBy(i => i.Enabled))
@@ -55,10 +78,11 @@ internal sealed class LayoutPreview : Control
             if (rf.Width < 2 || rf.Height < 2) continue;
 
             using var path = Round(rf, Sf(5));
+            var gc = GroupColor(it.Group);
             if (it.Enabled)
             {
-                using var fill = new SolidBrush(Color.FromArgb(58, Accent));
-                using var pen = new Pen(Accent, Sf(1.5f));
+                using var fill = new SolidBrush(Color.FromArgb(58, gc));
+                using var pen = new Pen(gc, Sf(1.5f));
                 g.FillPath(fill, path);
                 g.DrawPath(pen, path);
             }
@@ -92,7 +116,7 @@ internal sealed class LayoutPreview : Control
             if (it.Primary && it.Enabled && rf.Width > Sf(22))
             {
                 float d = Sf(7);
-                using var b = new SolidBrush(Accent);
+                using var b = new SolidBrush(gc);
                 g.FillEllipse(b, rf.Right - d - Sf(5), rf.Y + Sf(5), d, d);
             }
         }
@@ -124,11 +148,20 @@ internal sealed class ProfileCard : Control
 
         int on = p.Monitors.Count;
         int total = Math.Max(ctl.Master?.MonitorSet().Count ?? on, on);
-        var parts = new List<string> { p.Fixed != null ? $"{on} Monitor{(on == 1 ? "" : "e")} · feste Anordnung" : $"{on} von {total} Monitoren an" };
+        var parts = new List<string>();
+        if (p.KeepLocal) parts.Add("Dieser PC unverändert");
+        else parts.Add(p.Fixed != null ? $"{on} Monitor{(on == 1 ? "" : "e")} · feste Anordnung" : $"{on} von {total} Monitoren an");
+        foreach (var r in p.Remote)
+        {
+            var peer = ctl.Peer(r.PeerId);
+            if (peer == null) continue;
+            int rt = peer.Displays?.Monitors.Count(m => m.InMaster) ?? 0;
+            parts.Add(rt > 0 ? $"{peer.Name}: {r.Monitors.Count} von {rt}" : $"{peer.Name}: {r.Monitors.Count}");
+        }
         if (p.Hotkey is >= 1 and <= 9) parts.Add($"Strg+Alt+{p.Hotkey}");
         _summary = string.Join("  ·  ", parts);
 
-        _preview = new LayoutPreview { Location = new Point(S(12), S(12)), Size = new Size(Width - S(24), S(118)), Items = ctl.PreviewFor(p) };
+        _preview = new LayoutPreview { Location = new Point(S(12), S(12)), Size = new Size(Width - S(24), S(118)), Combined = ctl.CombinedPreviewFor(p) };
         _preview.DoubleClick += (_, _) => EditRequested?.Invoke(this);
         _preview.Click += (_, _) => Focus();
 
@@ -233,9 +266,10 @@ internal sealed class MonitorRow : Control
     readonly string _name, _sub;
     readonly bool _active, _connected;
     readonly Btn _rename;
+    readonly bool _remote;
     public event Action? RenameClicked;
 
-    public MonitorRow(int number, string name, string sub, bool active, bool connected, int width)
+    public MonitorRow(int number, string name, string sub, bool active, bool connected, int width, bool canRename = true, bool remote = false)
     {
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
                  ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
@@ -248,8 +282,11 @@ internal sealed class MonitorRow : Control
         _rename.Location = new Point(Width - _rename.Width - S(10), (Height - _rename.Height) / 2);
         _rename.Anchor = AnchorStyles.Right | AnchorStyles.Top;
         _rename.Click += (_, _) => RenameClicked?.Invoke();
-        Controls.Add(_rename);
+        _remote = remote;
+        if (canRename) Controls.Add(_rename);
     }
+
+    Color Col => _remote ? Peer : Accent;
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -265,17 +302,17 @@ internal sealed class MonitorRow : Control
         }
         float d = Sf(26);
         var cr = new RectangleF(Sf(10), (Height - d) / 2, d, d);
-        using (var cb = new SolidBrush(_active ? Color.FromArgb(60, Accent) : Surface2))
+        using (var cb = new SolidBrush(_active ? Color.FromArgb(60, Col) : Surface2))
             g.FillEllipse(cb, cr);
-        TextRenderer.DrawText(g, _number.ToString(), Bold, Rectangle.Round(cr), _active ? Accent : TextDim,
+        TextRenderer.DrawText(g, _number.ToString(), Bold, Rectangle.Round(cr), _active ? Col : TextDim,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
 
         int x = S(46);
-        int w = _rename.Left - x - S(8);
+        int w = (Controls.Contains(_rename) ? _rename.Left : Width - S(4)) - x - S(8);
         TextRenderer.DrawText(g, _name, Body, new Rectangle(x, S(5), w, S(20)), _connected ? Theme.Text : TextDim,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
         var state = _active ? "an" : _connected ? "aus" : "nicht angeschlossen";
-        var stateCol = _active ? Accent : TextDim;
+        var stateCol = _active ? Col : TextDim;
         var subText = string.IsNullOrEmpty(_sub) ? state : _sub + "  ·  " + state;
         TextRenderer.DrawText(g, subText, Small, new Rectangle(x, S(24), w, S(18)), stateCol,
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);

@@ -549,8 +549,16 @@ internal sealed class MainForm : DarkForm
 
     void EditProfile(Profile p, bool isNew)
     {
-        using var f = new ProfileEditorForm(_ctl, p, isNew);
-        if (f.ShowDialog(Visible ? this : null) != DialogResult.OK) return;
+        var work = p.Copy();
+        while (true)
+        {
+            using var f = new ProfileEditorForm(_ctl, work, isNew, identity: p);
+            var r = f.ShowDialog(Visible ? this : null);
+            if (r == DialogResult.Retry) continue; // Zuordnung der Bildschirme geändert → neu aufbauen
+            if (r != DialogResult.OK) { _ctl.NotifyChanged(); return; }
+            break;
+        }
+        p.CopyFrom(work);
         if (isNew) _ctl.Data.Profiles.Add(p);
         _ctl.NotifyChanged();
     }

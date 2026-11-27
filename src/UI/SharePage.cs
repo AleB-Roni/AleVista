@@ -349,6 +349,11 @@ internal sealed class SharePage : Panel
             if (p.Number <= 4) go.ShortcutKeyDisplayString = $"Strg+Alt+F{p.Number}";
             m.Items.Add(go);
             m.Items.Add(new ToolStripMenuItem("Neu verbinden", null, (_, _) => _svc.Reconnect(id)) { Enabled = S.Enabled && p.Address.Length > 0 });
+            var peer = S.Peers.FirstOrDefault(x => x.Id == id);
+            m.Items.Add(new ToolStripMenuItem("Bildschirme zuordnen …", null, (_, _) =>
+            {
+                if (peer != null && MonitorLinkForm.Edit(_owner, _ctl, peer)) _ctl.NotifyChanged();
+            }) { Enabled = peer?.Displays != null });
             m.Items.Add(new ToolStripSeparator());
             m.Items.Add(new ToolStripMenuItem("Entfernen", null, (_, _) =>
             {

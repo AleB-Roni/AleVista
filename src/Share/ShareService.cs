@@ -502,8 +502,9 @@ internal sealed class ShareService : IDisposable
         }
         if (!keep) { conn.Close(); return; }
         if (old != null && !ReferenceEquals(old, conn)) old.Close();
-        conn.Start();
 
+        // Erst den PC anlegen (UI-Warteschlange), dann lesen – sonst könnten seine ersten Nachrichten
+        // (z. B. die Monitorliste) vor dem Anlegen verarbeitet und verworfen werden.
         _ui(() =>
         {
             if (S.IgnoredIds.Contains(conn.PeerId))
@@ -531,6 +532,7 @@ internal sealed class ShareService : IDisposable
             Changed?.Invoke();
             DisplaysChanged?.Invoke();
         });
+        conn.Start();
     }
 
     void OnClosed(PeerConnection conn)

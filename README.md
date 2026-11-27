@@ -31,7 +31,7 @@ Dann einfach die Maus über die Kante schieben – Maus und Tastatur steuern jet
 | Strg+Alt+F2 … F4 | direkt zu PC 2 – 4 wechseln |
 | Strg+Alt+F9 | Wechsel über Bildschirmkanten an/aus |
 
-**Gemeinsame Profile über mehrere PCs:** Sobald ein anderer PC verbunden ist, zeigt der Reiter „Monitorprofile“ unter „Aktuelle Anordnung“ auch dessen Monitore (blau). Im Profil-Editor erscheinen alle Monitore beider PCs – pro PC wählst du, welche an sind, oder „nicht ändern“. Beim Aktivieren (Karte, Tray, Strg+Alt+1–9) werden alle beteiligten PCs gleichzeitig umgeschaltet; „Zurücksetzen“ in der Sicherheitsabfrage setzt auch die anderen PCs zurück. Ideal für Monitore, die an beiden PCs hängen und automatisch auf den Eingang umschalten, der ein Bild liefert.
+**Gemeinsame Profile über mehrere PCs:** Sobald ein anderer PC verbunden ist, zeigt der Reiter „Monitorprofile“ unter „Aktuelle Anordnung“ auch dessen Monitore (blau). Im Profil-Editor erscheint dann eine Liste aller Bildschirme: bei jedem Bildschirm per Klick wählen, welcher PC ihn bekommt (oder „Aus“). Bildschirme, die an beiden PCs hängen, werden über ihre EDID-Seriennummer erkannt und nur einmal angezeigt. Beim Aktivieren (Karte, Tray, Strg+Alt+1–9) werden alle beteiligten PCs gleichzeitig umgeschaltet; „Zurücksetzen“ in der Sicherheitsabfrage setzt auch die anderen PCs zurück. Ideal für Monitore, die an beiden PCs hängen und automatisch auf den Eingang umschalten, der ein Bild liefert.
 
 Außerdem: **Zwischenablage teilen** (Text), **Ecken sperren**, Mauszeiger ausblenden, solange ein anderer PC gesteuert wird. Wird der ferngesteuerte PC direkt mit seiner eigenen Maus/Tastatur benutzt, gibt er die Steuerung sofort zurück.
 
